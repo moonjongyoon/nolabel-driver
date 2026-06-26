@@ -628,70 +628,68 @@
     padding: 0;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    gap: 18px;
+    gap: 20px;
     position: relative;
-    overflow: hidden;       /* 카메라가 풀스크린이라 스크롤 막음 */
   }
-  /* 카메라가 스캔 화면 전체를 채우도록 — .scan-frame 밖으로 빼서 body 직속 자식으로 */
-  #qr-reader {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 0;
-    overflow: hidden;
-    background: #000;
-    z-index: 0;
-  }
-  /* 모든 UI 는 카메라 위에 */
   #screen-scan .scan-hint-text {
-    position: relative;
-    z-index: 11;
     text-align: center;
-    color: #fff;
+    color: rgba(255,255,255,0.85);
     font-size: 13px;
+    padding: 0 20px;
+    margin-top: 18px;
     line-height: 1.55;
-    padding: 14px 22px 18px;
-    margin: 0;
-    width: 100%;
-    background: linear-gradient(180deg, rgba(10,13,24,0.75) 0%, rgba(10,13,24,0) 100%);
   }
+  /* 스캔 가이드 프레임 — 카메라는 반드시 이 안에만 렌더 */
   .scan-frame {
     position: relative;
-    z-index: 10;            /* 카메라 위, 다른 UI 아래 */
     width: 240px;
     height: 240px;
     min-height: 240px;
     flex-shrink: 0;
+    margin-top: 10px;
+    overflow: hidden;            /* 영상이 프레임 밖으로 새는 것 차단 */
+    border-radius: 14px;
   }
-  /* .scan-frame 의 ::before 가 box-shadow 로 바깥을 dim → 카메라 전체에 스포트라이트 효과 */
   .scan-frame::before {
     content: "";
     position: absolute; inset: 0;
-    border-radius: 18px;
+    border-radius: 14px;
     box-shadow: 0 0 0 9999px rgba(0,0,0,0.55);
     z-index: 3;
     pointer-events: none;
   }
-  /* 진행률·보안 안내는 dim 위로 떠야 하므로 z-index 더 높게 */
-  #screen-scan .scan-progress,
-  #screen-scan .scan-secure {
-    position: relative;
-    z-index: 12;
+  /* 스캐너 컨테이너 — .scan-frame 안에 정확히 fit */
+  #qr-reader {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #000;
+    z-index: 1;
   }
-  /* html5-qrcode 가 내부에 만드는 scan_region 도 컨테이너에 정확히 fit 되도록 강제.
-     (라이브러리 기본 inline-style 이 비례가 안 맞아 video 가 코너 마커와 어긋남) */
+  /* html5-qrcode 가 #qr-reader 내부에 만드는 모든 컨테이너를 100% 강제.
+     라이브러리가 인라인 width/height 를 박는 경우가 많아 !important 로 덮어씀. */
+  #qr-reader > div,
   #qr-reader__scan_region {
     width: 100% !important;
     height: 100% !important;
     min-height: 0 !important;
+    max-height: none !important;
     padding: 0 !important;
+    margin: 0 !important;
     background: transparent !important;
     position: relative !important;
+    display: block !important;
   }
   #qr-reader__dashboard,
   #qr-reader__header_message,
   #qr-reader__scan_region img { display: none !important; }
+  /* video 는 부모 컨테이너를 가득 채우도록 강제. transform 폴백은 사용하지 않는다
+     (영상 위치를 깨뜨려 헤더 아래 띠처럼 새어 나오는 원인이었음). */
   #qr-reader video {
     position: absolute !important;
     top: 0 !important;
@@ -700,16 +698,10 @@
     height: 100% !important;
     object-fit: cover !important;
     background: #000;
-    display: block;
-    transform-origin: center center;
-    transition: transform .2s ease;
+    display: block !important;
+    transform: none !important;
   }
-  /* 트랙 zoom capability 가 없을 때 폴백 (CSS 로 영상만 확대) */
-  #qr-reader video.zoom-fallback {
-    transform: scale(1.6);
-  }
-  /* html5-qrcode 가 qrbox 시각화로 추가하는 흰색 사각형/모서리 가이드 제거.
-     바깥 초록 코너 마커(.corner.*)는 유지. */
+  /* html5-qrcode 가 qrbox 시각화로 추가하는 흰색 가이드 제거. 초록 .corner.* 는 유지 */
   #qr-shaded-region,
   #qr-reader #qr-shaded-region,
   #qr-reader__scan_region #qr-shaded-region {
@@ -1161,15 +1153,14 @@
       </div>
 
       <div class="body">
-        <!-- 카메라가 화면 전체 — body 직속 자식으로 풀스크린 -->
-        <div id="qr-reader"></div>
-
         <div class="scan-hint-text">
           오늘 배송할 송장 QR을 차례로 비추세요<br/>
           한 번 등록된 정보는 배송 중 즉시 조회됩니다
         </div>
 
         <div class="scan-frame">
+          <!-- 카메라는 반드시 이 프레임 안에만 렌더 -->
+          <div id="qr-reader"></div>
           <div id="qr-error" class="qr-error" style="display:none;"></div>
           <span class="corner tl"></span>
           <span class="corner tr"></span>
@@ -1714,13 +1705,10 @@
       return;
     }
 
-    // qrbox 는 풀스크린 컨테이너가 아니라 시각 가이드(.scan-frame) 크기에 맞춤
-    // → 사용자가 보는 사각형 안에서만 인식되도록 일관성 유지
-    const frameEl = document.querySelector('.scan-frame');
-    const fr = frameEl ? frameEl.getBoundingClientRect() : null;
-    const visualSize = fr ? Math.min(fr.width, fr.height) : 240;
-    const qrboxSize = Math.max(140, Math.floor(visualSize));
-    console.log('[QR] qrbox =', qrboxSize, 'px (visual frame ' + Math.round(visualSize) + 'px)');
+    // qrbox = 컨테이너 사이즈의 ~90% (코너 마커 안쪽에 정확히 들어옴)
+    const frameSize = Math.min(rect.width, rect.height);
+    const qrboxSize = Math.max(140, Math.floor(frameSize * 0.9));
+    console.log('[QR] qrbox =', qrboxSize, 'px (container ' + Math.round(frameSize) + 'px)');
     const config = {
       fps: 10,
       qrbox: { width: qrboxSize, height: qrboxSize },
@@ -1772,44 +1760,37 @@
     }
   }
 
-  /* 스캐너 시작 직후 카메라 트랙 zoom 을 한 단계 당겨둔다 (QR 인식률 향상).
-     • 트랙이 zoom capability 를 지원하면 applyConstraints 로 적용
-     • 미지원이면 video 요소에 CSS scale 폴백 클래스 추가
-     qrbox 는 원본 프레임 기준이라 줌과 무관하게 동작. */
+  /* 스캐너 시작 직후 카메라 트랙 자체 줌만 사용 (CSS scale 폴백은 영상 위치를 깨뜨려 제거).
+     • zoom capability 지원: applyConstraints 로 min*2 (또는 range 30% 지점)
+     • 미지원: 기본 배율 그대로 — object-fit:cover 로 프레임 채우는 것까지만 한다. */
   async function applyInitialZoom() {
     try {
-      // 비디오가 attach 될 때까지 한 박자 대기
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 250));
       const videoEl = document.querySelector('#qr-reader video');
       if (!videoEl || !videoEl.srcObject) {
-        console.log('[QR] zoom: video 아직 준비 안 됨, 폴백 CSS 적용');
-        if (videoEl) videoEl.classList.add('zoom-fallback');
+        console.log('[QR] zoom: video 아직 준비 안 됨 — skip');
         return;
       }
       const tracks = videoEl.srcObject.getVideoTracks();
       const track = tracks && tracks[0];
-      if (!track) {
-        videoEl.classList.add('zoom-fallback');
+      if (!track || !track.getCapabilities) {
+        console.log('[QR] zoom: track capabilities API 미지원 — 기본 배율');
         return;
       }
-      const caps = (track.getCapabilities && track.getCapabilities()) || {};
+      const caps = track.getCapabilities() || {};
       if (caps.zoom && typeof caps.zoom.max === 'number') {
         const minZ = caps.zoom.min || 1;
         const maxZ = caps.zoom.max;
-        // 기본값(min)의 2배 — capability 범위의 30% 미만이면 30% 지점까지 보정
         let target = Math.min(maxZ, minZ * 2);
         const thirty = minZ + (maxZ - minZ) * 0.3;
         if (target < thirty) target = thirty;
         await track.applyConstraints({ advanced: [{ zoom: target }] });
         console.log('[QR] ✓ zoom =', target.toFixed(2), 'of [' + minZ + ',' + maxZ + ']');
       } else {
-        console.log('[QR] zoom capability 미지원 → CSS scale 폴백');
-        videoEl.classList.add('zoom-fallback');
+        console.log('[QR] zoom capability 미지원 → 기본 배율 사용 (영상 위치는 그대로)');
       }
     } catch (e) {
-      console.warn('[QR] zoom 적용 실패, CSS 폴백:', e && (e.message || e));
-      const videoEl = document.querySelector('#qr-reader video');
-      if (videoEl) videoEl.classList.add('zoom-fallback');
+      console.warn('[QR] zoom 적용 실패 (영상은 그대로 유지):', e && (e.message || e));
     }
   }
 
