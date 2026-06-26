@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NOLABEL · 송장 QR 생성기 (데모)</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<style>
+  :root {
+    --primary: #2b59ff;
+    --primary-soft: #eaf0ff;
+    --ink: #1a2233;
+    --ink-2: #4a5568;
+    --ink-3: #8693a8;
+    --line: #e6eaf2;
+    --accent: #00b894;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+                 "Noto Sans KR", sans-serif;
+    background: #eef1f6; color: var(--ink);
+  }
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--ink-3); font-size: 13px; margin-bottom: 18px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 18px;
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    padding: 14px;
+    box-shadow: 0 4px 14px rgba(20,30,60,0.05);
+  }
+  .card h3 { margin: 0 0 10px; font-size: 14px; }
+  #map { height: 380px; border-radius: 10px; overflow: hidden; }
+  .coord-row {
+    display: flex; gap: 8px; margin-top: 10px;
+    font-size: 12px; color: var(--ink-2);
+  }
+  .coord-row code {
+    background: var(--primary-soft); color: var(--primary);
+    padding: 4px 8px; border-radius: 6px;
+    font-family: "SF Mono", ui-monospace, monospace;
+  }
+
+  .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+  .form-group label { font-size: 11px; font-weight: 700; color: var(--ink-2); letter-spacing: 0.3px; }
+  .form-group input {
+    height: 42px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 0 12px;
+    font-size: 14px;
+    background: #fbfcfe;
+    outline: none;
+  }
+  .form-group input:focus { border-color: var(--primary); background: #fff; }
+
+  .btn {
+    width: 100%;
+    height: 46px;
+    border-radius: 10px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-size: 15px; font-weight: 700;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .btn:hover { background: #1a3fcc; }
+  .btn.ghost {
+    background: #f3f5fb; color: var(--ink);
+  }
+
+  .qr-box {
+    margin-top: 14px;
+    background: #fff;
+    border-radius: 10px;
+    padding: 14px;
+    border: 1px dashed var(--line);
+    display: flex; flex-direction: column; align-items: center;
+    gap: 10px;
+    min-height: 220px;
+    justify-content: center;
+  }
+  .qr-box small {
+    color: var(--ink-3); font-size: 11px;
+    word-break: break-all;
+  }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .preset-list {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+  }
+  .preset-list button {
+    background: var(--primary-soft); color: var(--primary);
+    border: none; padding: 6px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; cursor: pointer;
+  }
+  .hint {
+    font-size: 11px; color: var(--ink-3); margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <h1>📦 NOLABEL 송장 QR 생성기</h1>
+  <p class="sub">지도에서 배송지 위치를 클릭한 뒤 정보를 입력하고 'QR 생성'을 누르세요. 생성된 QR을 기사 앱에서 스캔하면 등록됩니다.</p>
+
+  <div class="grid">
+    <!-- 왼쪽: 지도 + 폼 -->
+    <div class="card">
+      <h3>1) 배송지 좌표 선택 (지도 클릭)</h3>
+      <div id="map"></div>
+      <div class="coord-row">
+        <span>선택 좌표:</span>
+        <code id="coord-text">아직 선택되지 않음</code>
+      </div>
+
+      <h3 style="margin-top:18px;">2) 송장 정보 입력</h3>
+      <div class="form-group">
+        <label>송장 ID</label>
+        <input id="f-id" placeholder="ND-2026-0608-001" />
+      </div>
+      <div class="form-group">
+        <label>수취인 이름</label>
+        <input id="f-name" placeholder="김민준" />
+      </div>
+      <div class="form-group">
+        <label>주소</label>
+        <input id="f-address" placeholder="강원도 춘천시 효자동 123-45" />
+      </div>
+      <div class="form-group">
+        <label>연락처</label>
+        <input id="f-phone" placeholder="010-1234-5678" />
+      </div>
+      <div class="form-group">
+        <label>지역 코드 (선택)</label>
+        <input id="f-region" placeholder="CC-01" />
+      </div>
+
+      <div class="actions">
+        <button class="btn" onclick="generateQR()">QR 생성 ▸</button>
+        <button class="btn ghost" onclick="nextPreset()">⏭ 다음 데모 송장</button>
+      </div>
+
+      <div class="preset-list">
+        <button onclick="loadPreset(0)">데모 1 · 김민준</button>
+        <button onclick="loadPreset(1)">데모 2 · 이서연</button>
+        <button onclick="loadPreset(2)">데모 3 · 박지호</button>
+        <button onclick="loadPreset(3)">데모 4 · 최수아</button>
+      </div>
+      <p class="hint">💡 PC 화면을 켜둔 채 기사 앱(아이폰 Safari)에서 카메라를 비추면 됩니다.</p>
+    </div>
+
+    <!-- 오른쪽: QR 결과 -->
+    <div class="card">
+      <h3>생성된 QR</h3>
+      <div class="qr-box" id="qr-box">
+        <div style="color:var(--ink-3); font-size:13px;">좌표·정보 입력 후 'QR 생성'을 눌러주세요.</div>
+      </div>
+      <small style="display:block; margin-top:10px; color:var(--ink-3);">
+        스캔되는 JSON 형식:<br/>
+        <code style="font-size:10.5px;">{"id":"...","name":"...","address":"...","phone":"...","lat":37.88,"lng":127.73}</code>
+      </small>
+    </div>
+  </div>
+</div>
+
+<script>
+  let selectedLat = null, selectedLng = null;
+  let pickedMarker = null;
+
+  const map = L.map('map').setView([37.881, 127.730], 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  map.on('click', (e) => {
+    selectedLat = +e.latlng.lat.toFixed(5);
+    selectedLng = +e.latlng.lng.toFixed(5);
+    document.getElementById('coord-text').textContent =
+      `lat=${selectedLat}, lng=${selectedLng}`;
+    if (pickedMarker) map.removeLayer(pickedMarker);
+    pickedMarker = L.marker([selectedLat, selectedLng]).addTo(map);
+  });
+
+  // 데모 프리셋 (춘천 부근)
+  const PRESETS = [
+    { id: "ND-2026-0608-001", name: "김민준", address: "강원도 춘천시 효자동 123-45", phone: "010-1234-5678", region: "CC-01", lat: 37.8765, lng: 127.7320 },
+    { id: "ND-2026-0608-002", name: "이서연", address: "강원도 춘천시 석사동 567-89", phone: "010-2345-6789", region: "CC-02", lat: 37.8694, lng: 127.7427 },
+    { id: "ND-2026-0608-003", name: "박지호", address: "강원도 춘천시 후평동 234-56 NOLABEL빌딩 302호", phone: "010-3456-7890", region: "CC-03", lat: 37.8800, lng: 127.7530 },
+    { id: "ND-2026-0608-004", name: "최수아", address: "강원도 춘천시 퇴계동 891-23", phone: "010-4567-8901", region: "CC-04", lat: 37.8580, lng: 127.7240 }
+  ];
+  let presetIdx = 0;
+  function loadPreset(i) {
+    const p = PRESETS[i];
+    if (!p) return;
+    presetIdx = i;
+    document.getElementById('f-id').value = p.id;
+    document.getElementById('f-name').value = p.name;
+    document.getElementById('f-address').value = p.address;
+    document.getElementById('f-phone').value = p.phone;
+    document.getElementById('f-region').value = p.region;
+    selectedLat = p.lat; selectedLng = p.lng;
+    document.getElementById('coord-text').textContent = `lat=${p.lat}, lng=${p.lng}`;
+    if (pickedMarker) map.removeLayer(pickedMarker);
+    pickedMarker = L.marker([p.lat, p.lng]).addTo(map);
+    map.setView([p.lat, p.lng], 14);
+  }
+  function nextPreset() {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    loadPreset(presetIdx);
+    generateQR();
+  }
+
+  function generateQR() {
+    const id = document.getElementById('f-id').value.trim();
+    const name = document.getElementById('f-name').value.trim();
+    const address = document.getElementById('f-address').value.trim();
+    const phone = document.getElementById('f-phone').value.trim();
+    const region = document.getElementById('f-region').value.trim();
+
+    if (!id || !name) { alert('송장 ID와 수취인 이름은 필수입니다'); return; }
+    if (selectedLat === null) { alert('지도에서 좌표를 먼저 선택해주세요'); return; }
+
+    const payload = { id, name, address, phone, region, lat: selectedLat, lng: selectedLng };
+    const text = JSON.stringify(payload);
+
+    const box = document.getElementById('qr-box');
+    box.innerHTML = '';
+    const inner = document.createElement('div');
+    box.appendChild(inner);
+    new QRCode(inner, {
+      text,
+      width: 220,
+      height: 220,
+      correctLevel: QRCode.CorrectLevel.M
+    });
+    const meta = document.createElement('small');
+    meta.textContent = text;
+    box.appendChild(meta);
+  }
+
+  // 첫 진입 시 데모 1 자동 로드
+  loadPreset(0);
+  generateQR();
+</script>
+
+</body>
+</html>

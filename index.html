@@ -1,0 +1,1832 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>NOLABEL — 익명 배송 기사 앱</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+
+<style>
+  /* ===========================================================
+     0. 전역 디자인 토큰
+     =========================================================== */
+  :root {
+    --bg: #eef1f6;
+    --phone-bg: #ffffff;
+    --ink: #1a2233;
+    --ink-2: #4a5568;
+    --ink-3: #8693a8;
+    --line: #e6eaf2;
+    --primary: #2b59ff;
+    --primary-dark: #1a3fcc;
+    --primary-soft: #eaf0ff;
+    --accent: #00b894;
+    --warn: #f0a020;
+    --danger: #e53e3e;
+    --dark: #0f1424;
+    --radius: 14px;
+    --radius-sm: 10px;
+    --shadow: 0 10px 30px rgba(20, 30, 60, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+                 "Noto Sans KR", "Malgun Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===========================================================
+     1. 폰 프레임 & 데스크톱 안내
+     =========================================================== */
+  .stage {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 28px 16px 64px;
+    gap: 18px;
+  }
+  .stage-header {
+    text-align: center;
+    color: var(--ink-2);
+  }
+  .stage-header h1 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: -0.3px;
+    color: var(--ink);
+  }
+  .stage-header p {
+    margin: 6px 0 0;
+    font-size: 13px;
+  }
+  .phone {
+    width: 390px;
+    height: 800px;
+    background: var(--phone-bg);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--line);
+  }
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    background: var(--phone-bg);
+  }
+  .screen.active { display: flex; }
+
+  .status-bar { display: none; }
+
+  .app-header {
+    padding: 18px 18px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+  }
+  .app-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+  }
+  .app-header .back {
+    background: none;
+    border: none;
+    font-size: 18px;
+    color: var(--ink-2);
+    padding: 4px 6px;
+    cursor: pointer;
+  }
+  .app-header .spacer { flex: 1; }
+  .app-header .ico-btn {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--primary-soft);
+    color: var(--primary);
+    border: none;
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px 24px;
+  }
+  .body::-webkit-scrollbar { width: 0; }
+
+  .footer {
+    padding: 12px 16px 18px;
+    border-top: 1px solid var(--line);
+    background: #fff;
+    display: flex;
+    gap: 10px;
+  }
+  .btn {
+    flex: 1;
+    height: 50px;
+    border-radius: 12px;
+    border: none;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: -0.2px;
+    transition: transform .05s ease, background .15s ease;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-ghost { background: #f3f5fb; color: var(--ink); }
+  .btn-dark { background: var(--dark); color: #fff; }
+  .btn-success { background: var(--accent); color: #fff; }
+  .btn-danger { background: var(--danger); color: #fff; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: -0.1px;
+  }
+  .badge.대기 { background: #eef2f9; color: #4a5568; }
+  .badge.배송중 { background: #e8f0ff; color: #1a3fcc; }
+  .badge.완료 { background: #e0f6ef; color: #00875a; }
+  .badge.만료 { background: #fde6e6; color: #b42318; }
+
+  /* ===========================================================
+     2. 로그인 화면
+     =========================================================== */
+  #screen-login .body {
+    padding: 28px 22px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .brand { text-align: center; margin-top: 8px; }
+  .brand .logo {
+    width: 64px; height: 64px;
+    margin: 0 auto 14px;
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(43, 89, 255, 0.32);
+  }
+  .brand .logo img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .brand h1 { margin: 0; font-size: 24px; letter-spacing: -0.6px; }
+  .brand p { margin: 6px 0 0; color: var(--ink-3); font-size: 13px; }
+  .auth-callout {
+    background: var(--primary-soft);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    display: flex; gap: 10px; align-items: center;
+    color: var(--primary-dark);
+    font-size: 12.5px;
+  }
+  .auth-callout .lock {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+  .form-group input {
+    height: 48px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0 14px;
+    font-size: 15px;
+    background: #fbfcfe;
+    outline: none;
+    transition: border .15s ease, background .15s ease;
+  }
+  .form-group input:focus { border-color: var(--primary); background: #fff; }
+  .login-meta {
+    display: flex; justify-content: space-between;
+    align-items: center;
+    font-size: 12px; color: var(--ink-3);
+  }
+  .login-meta a { color: var(--primary); text-decoration: none; }
+
+  .check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--ink-2);
+  }
+  .check-box {
+    width: 20px; height: 20px;
+    border-radius: 5px;
+    border: 1.5px solid #c4cad6;
+    background: #fff;
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    transition: background .15s ease, border-color .15s ease;
+    flex-shrink: 0;
+  }
+  .check-box::after {
+    content: "✓";
+    color: #fff;
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .check-box.on { background: var(--primary); border-color: var(--primary); }
+  .check-box.on::after { opacity: 1; }
+
+  /* ===========================================================
+     3. 배송 목록 화면
+     =========================================================== */
+  .top-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .top-actions .action {
+    height: 70px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 0 14px;
+    cursor: pointer;
+    font-weight: 700;
+    text-align: left;
+    letter-spacing: -0.2px;
+  }
+  .top-actions .action small {
+    font-weight: 500;
+    opacity: 0.85;
+    font-size: 11px;
+    margin-top: 3px;
+  }
+  .top-actions .action.alt {
+    background: #fff;
+    color: var(--primary);
+    border: 1.5px solid var(--primary);
+  }
+
+  .summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .summary-row .title { font-size: 15px; font-weight: 700; }
+  .summary-row .count { font-size: 12px; color: var(--ink-3); }
+
+  .delivery-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: box-shadow .15s ease, transform .05s ease;
+  }
+  .delivery-card:hover { box-shadow: 0 4px 14px rgba(20,30,60,0.06); }
+  .delivery-card:active { transform: scale(0.99); }
+  .delivery-card .row {
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .region-chip {
+    display: inline-flex;
+    align-items: center;
+    background: #0f1424;
+    color: #fff;
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .delivery-id {
+    font-size: 13px;
+    color: var(--ink-2);
+    font-family: "SF Mono", ui-monospace, monospace;
+    margin-top: 8px;
+  }
+  .delivery-meta {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .delivery-meta .privacy {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ===========================================================
+     4. 경로 지도 화면 (Leaflet)
+     =========================================================== */
+  .map-wrap {
+    position: relative;
+    height: 260px;
+    margin: -16px -18px 12px;
+    background: #f1f4fa;
+    overflow: hidden;
+  }
+  #map, #lookup-map {
+    width: 100%;
+    height: 100%;
+    background: #f1f4fa;
+  }
+  .leaflet-container { background: #e8edf5; font-family: inherit; }
+  .leaflet-control-attribution { font-size: 9px; }
+
+  /* Leaflet divIcon — 배송지 핀 (기존 .pin 디자인 그대로 재현) */
+  .pin-icon-wrap {
+    background: transparent !important;
+    border: none !important;
+  }
+  .pin-icon {
+    width: 32px; height: 38px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .pin-icon .head {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    border: 3px solid #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800;
+    box-shadow: 0 4px 10px rgba(43,89,255,0.4);
+  }
+  .pin-icon .tail {
+    width: 2px; height: 8px;
+    background: var(--primary);
+  }
+  .pin-icon.done .head { background: var(--accent); box-shadow: 0 4px 10px rgba(0,184,148,0.35); }
+  .pin-icon.done .tail { background: var(--accent); }
+  .pin-icon.active .head {
+    width: 36px; height: 36px;
+    font-size: 14px;
+    border-width: 3px;
+    box-shadow: 0 6px 16px rgba(43,89,255,0.55);
+  }
+  .pin-icon.active.done .head { box-shadow: 0 6px 16px rgba(0,184,148,0.5); }
+
+  /* Leaflet divIcon — 기사 현재 위치 마커 */
+  .driver-marker-wrap {
+    background: transparent !important;
+    border: none !important;
+  }
+  .driver-marker-icon {
+    position: relative;
+    width: 14px; height: 14px;
+  }
+  .driver-marker-icon .dm-dot {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 2.5px solid #fff;
+    box-shadow: 0 2px 8px rgba(43,89,255,0.45);
+  }
+  .driver-marker-icon .dm-pulse {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: rgba(43,89,255,0.35);
+    transform: translate(-50%, -50%);
+    animation: driverPulse 1.6s ease-out infinite;
+  }
+  @keyframes driverPulse {
+    0%   { transform: translate(-50%, -50%) scale(1);   opacity: 0.55; }
+    100% { transform: translate(-50%, -50%) scale(2.8); opacity: 0; }
+  }
+
+  .map-overlay {
+    position: absolute;
+    top: 12px; left: 12px;
+    background: rgba(15, 20, 36, 0.85);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  .map-overlay .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); animation: pulse 1.4s infinite;
+  }
+  .map-overlay.live .dot { animation: pulseFast 0.9s infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @keyframes pulseFast {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(1.5); }
+  }
+
+  /* '다음 배송' 액션 패널 */
+  .next-panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 14px;
+    box-shadow: 0 2px 10px rgba(20,30,60,0.05);
+  }
+  .next-panel .next-head {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .next-panel .next-badge {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 16px;
+    box-shadow: 0 4px 10px rgba(43,89,255,0.32);
+    flex-shrink: 0;
+  }
+  .next-panel .next-meta { flex: 1; min-width: 0; line-height: 1.35; }
+  .next-panel .next-meta b { font-size: 14px; color: var(--ink); }
+  .next-panel .next-meta small {
+    display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px;
+  }
+  .next-panel .next-eta {
+    background: var(--primary-soft); color: var(--primary);
+    font-size: 11px; font-weight: 700;
+    padding: 4px 10px; border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .next-panel .next-progress { margin-bottom: 12px; }
+  .next-panel .next-progress-text {
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--ink-3);
+    margin-bottom: 5px;
+  }
+  .next-panel .next-progress-text b { color: var(--ink); font-size: 12px; }
+  .next-panel .next-bar {
+    height: 6px; background: #eef2f9;
+    border-radius: 999px; overflow: hidden;
+  }
+  .next-panel .next-bar > i {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--accent), #4dd0a8);
+    border-radius: 999px; transition: width .3s ease;
+  }
+  .next-panel .next-actions { display: flex; gap: 8px; }
+  .next-panel .np-btn {
+    height: 48px;
+    border-radius: 12px;
+    font-size: 14px; font-weight: 700;
+    cursor: pointer;
+    letter-spacing: -0.2px;
+    border: none;
+    transition: transform .05s ease;
+  }
+  .next-panel .np-btn:active { transform: scale(0.98); }
+  .next-panel .np-call {
+    flex: 0 0 96px;
+    background: #f3f5fb; color: var(--ink);
+  }
+  .next-panel .np-go {
+    flex: 1;
+    background: var(--primary); color: #fff;
+  }
+  .next-panel .np-ai {
+    flex: 1;
+    background: var(--primary-soft);
+    color: var(--primary);
+    border: 1.5px solid var(--primary-soft);
+  }
+  .next-panel .np-ai[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .next-empty {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 13px; color: var(--ink-2);
+  }
+  .next-empty .tag {
+    background: var(--accent); color: #fff;
+    padding: 6px 10px; border-radius: 8px;
+    font-size: 11px; font-weight: 800;
+    flex-shrink: 0;
+  }
+  .next-empty .tag.gray { background: var(--ink-3); }
+
+  /* 배송 카드 강조 */
+  .delivery-card { position: relative; }
+  .delivery-card .row.head {
+    display: flex; align-items: center; gap: 0;
+  }
+  .delivery-card .row.head .spacer { flex: 1; }
+  .delivery-card .order-no {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--primary-soft);
+    color: var(--primary);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 11px;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+  .delivery-card.is-done { opacity: 0.55; }
+  .delivery-card.is-done .order-no { background: #e0f6ef; color: #00875a; }
+  .delivery-card.is-next {
+    border: 2px solid var(--primary);
+    box-shadow: 0 4px 14px rgba(43,89,255,0.14);
+  }
+  .delivery-card.is-next .order-no { background: var(--primary); color: #fff; }
+  .delivery-card.is-next::after {
+    content: "지금 배송";
+    position: absolute;
+    top: -9px; right: 14px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.3px;
+  }
+  .empty-list {
+    text-align: center;
+    padding: 28px 16px;
+    color: var(--ink-3);
+    font-size: 13px;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+  }
+  .empty-list b { display: block; color: var(--ink-2); margin-bottom: 4px; font-size: 14px; }
+
+  /* ===========================================================
+     5. QR 스캔 화면
+     =========================================================== */
+  #screen-scan {
+    background: #0a0d18;
+    color: #fff;
+  }
+  #screen-scan .app-header {
+    background: rgba(10, 13, 24, 0.6);
+    border-bottom: none;
+    color: #fff;
+  }
+  #screen-scan .app-header h2 { color: #fff; }
+  #screen-scan .app-header .back { color: #fff; }
+  #screen-scan .body {
+    padding: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 20px;
+    position: relative;
+  }
+  .scan-frame {
+    position: relative;
+    width: 240px; height: 240px;
+    margin-top: 30px;
+  }
+  .scan-frame::before {
+    content: "";
+    position: absolute; inset: 0;
+    border-radius: 18px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.55);
+    z-index: 3;
+    pointer-events: none;
+  }
+  #qr-reader {
+    position: absolute;
+    inset: 0;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #000;
+    z-index: 1;
+  }
+  #qr-reader video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+  }
+  #qr-reader__dashboard,
+  #qr-reader__scan_region img,
+  #qr-reader__header_message { display: none !important; }
+  #qr-reader__scan_region { background: transparent !important; min-height: 0 !important; padding: 0 !important; }
+  .corner {
+    position: absolute;
+    width: 30px; height: 30px;
+    border: 4px solid var(--accent);
+    z-index: 4;
+  }
+  .corner.tl { top: -4px; left: -4px; border-right: none; border-bottom: none; border-top-left-radius: 8px; }
+  .corner.tr { top: -4px; right: -4px; border-left: none; border-bottom: none; border-top-right-radius: 8px; }
+  .corner.bl { bottom: -4px; left: -4px; border-right: none; border-top: none; border-bottom-left-radius: 8px; }
+  .corner.br { bottom: -4px; right: -4px; border-left: none; border-top: none; border-bottom-right-radius: 8px; }
+  .scan-line {
+    position: absolute;
+    left: 8px; right: 8px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    box-shadow: 0 0 8px var(--accent);
+    top: 20px;
+    z-index: 4;
+    animation: scanmove 2s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes scanmove {
+    0%, 100% { top: 20px; }
+    50% { top: 220px; }
+  }
+  .scan-hint { text-align: center; color: #fff; z-index: 2; }
+  .scan-hint h3 { margin: 0 0 6px; font-size: 18px; font-weight: 700; }
+  .scan-hint p { margin: 0; font-size: 12.5px; color: rgba(255,255,255,0.65); }
+  .scan-secure {
+    margin-top: 4px;
+    display: inline-flex;
+    align-items: center; gap: 6px;
+    padding: 6px 12px;
+    background: rgba(0,184,148,0.15);
+    color: var(--accent);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  #screen-scan .footer {
+    background: rgba(10, 13, 24, 0.85);
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .scan-progress {
+    background: rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px 18px;
+    width: 260px;
+    text-align: center;
+    color: #fff;
+  }
+  .scan-progress .progress-num {
+    font-size: 22px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .scan-progress .progress-num b {
+    color: var(--accent);
+    font-size: 28px;
+  }
+  .scan-progress .progress-bar {
+    height: 6px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .scan-progress .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+  .scan-progress .progress-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.6);
+  }
+
+  /* ===========================================================
+     6. 임시 조회 화면
+     =========================================================== */
+  #screen-lookup .body {
+    padding: 12px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+  }
+
+  .lookup-banner {
+    padding: 10px 12px;
+    background: linear-gradient(135deg, #fff4e0, #ffe9c2);
+    border: 1px solid #f0d99a;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .lookup-banner .icon {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--warn);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .lookup-banner .meta {
+    flex: 1;
+    line-height: 1.3;
+    min-width: 0;
+  }
+  .lookup-banner .meta b {
+    font-size: 12px;
+    color: #6b4500;
+    display: block;
+  }
+  .lookup-banner .meta small {
+    display: block;
+    font-size: 10px;
+    color: #8a5b00;
+    margin-top: 1px;
+  }
+  .lookup-banner .wait-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #fff;
+    color: var(--warn);
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    border: 1px solid #f0d99a;
+    flex-shrink: 0;
+  }
+  .lookup-banner .wait-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--warn);
+    animation: pulse 1.2s infinite;
+  }
+
+  .lookup-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    box-shadow: 0 2px 8px rgba(20,30,60,0.04);
+    flex-shrink: 0;
+  }
+  .lookup-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .lookup-id {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-2);
+    margin-top: 2px;
+  }
+  .lookup-row { margin-bottom: 10px; }
+  .lookup-row:last-child { margin-bottom: 0; }
+  .lookup-label {
+    font-size: 10.5px;
+    color: var(--ink-3);
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+  .lookup-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+    line-height: 1.35;
+    word-break: keep-all;
+  }
+
+  .lookup-warning {
+    padding: 10px 12px;
+    background: #fde6e6;
+    border-radius: var(--radius-sm);
+    color: #b42318;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  .map-wrap.in-lookup {
+    height: 280px;
+    margin: -12px -14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* ===========================================================
+     7. 완료 안내
+     =========================================================== */
+  #screen-done .body {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: 40px 28px;
+    gap: 14px;
+  }
+  .done-icon {
+    width: 92px; height: 92px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #4dd0a8);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 42px;
+    box-shadow: 0 12px 30px rgba(0,184,148,0.35);
+  }
+  #screen-done h2 {
+    margin: 4px 0 0;
+    font-size: 22px;
+    letter-spacing: -0.4px;
+  }
+  #screen-done p {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  .done-meta {
+    background: #f7f9fd;
+    border-radius: var(--radius);
+    padding: 14px;
+    width: 100%;
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    line-height: 1.6;
+    text-align: left;
+  }
+  .done-meta b { color: var(--ink); }
+  .done-meta .row {
+    display: flex; justify-content: space-between;
+  }
+  .done-lock {
+    margin-top: 6px;
+    padding: 10px 14px;
+    background: #eef2f9;
+    border-radius: var(--radius-sm);
+    color: var(--ink-2);
+    font-size: 12px;
+    font-weight: 600;
+    width: 100%;
+    text-align: center;
+  }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 90px;
+    transform: translateX(-50%);
+    background: rgba(15, 20, 36, 0.92);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    z-index: 2000;
+    opacity: 0;
+    transition: opacity .25s ease;
+    pointer-events: none;
+    white-space: nowrap;
+    max-width: 88%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .toast.show { opacity: 1; }
+
+  .nav-help {
+    text-align: center;
+    color: var(--ink-3);
+    font-size: 12px;
+    max-width: 390px;
+  }
+  .nav-help kbd {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+  }
+
+  /* ===========================================================
+     8. 모바일 풀스크린
+     =========================================================== */
+  @media (max-width: 480px) {
+    .stage { padding: 0; gap: 0; min-height: 100dvh; }
+    .stage-header, .nav-help { display: none; }
+    .phone {
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="stage-header">
+    <h1>NOLABEL · 기사 앱</h1>
+    <p>QR 기반 익명 배송 · 해커톤 데모</p>
+  </div>
+
+  <div class="phone" id="phone">
+
+    <!-- ==========================================================
+         [1] 기사 로그인 화면
+         ========================================================== -->
+    <section class="screen active" id="screen-login">
+      <div class="status-bar">
+        <span>9:41</span>
+        <span class="right">●●● 5G ▮▮▮</span>
+      </div>
+      <div class="body">
+        <div class="brand">
+          <div class="logo"><img src="ikon.png" alt="NOLABEL" /></div>
+          <h1>NOLABEL</h1>
+          <p>개인정보 없는 익명 송장 · 기사용</p>
+        </div>
+
+        <div class="auth-callout">
+          <div class="lock">🔒</div>
+          <div>
+            <b>권한 있는 기사만 접근</b>할 수 있어요.<br/>
+            본인 인증된 단말기에서만 로그인됩니다.
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="driver-id">기사 아이디</label>
+          <input id="driver-id" type="text" placeholder="driver_2418" value="driver_2418" />
+        </div>
+
+        <div class="form-group">
+          <label for="driver-pw">비밀번호</label>
+          <input id="driver-pw" type="password" placeholder="비밀번호" value="••••••••" />
+        </div>
+
+        <div class="login-meta">
+          <label class="check-label">
+            <span class="check-box" role="checkbox" aria-checked="false" onclick="toggleCheck(this)"></span>
+            <span>이 단말기 기억하기</span>
+          </label>
+          <a href="#" onclick="event.preventDefault()">비밀번호 찾기</a>
+        </div>
+      </div>
+      <div class="footer">
+        <button class="btn btn-primary" onclick="go('screen-list')">로그인</button>
+      </div>
+    </section>
+
+
+    <!-- ==========================================================
+         [2] 메인 — 경로 지도 + AI 요약 + 오늘의 배송 목록
+         ========================================================== -->
+    <section class="screen" id="screen-list">
+      <div class="app-header">
+        <h2>오늘의 배송</h2>
+        <span class="spacer"></span>
+        <span class="badge 대기" style="margin-right:8px;">춘천</span>
+        <button class="ico-btn" title="새로고침" onclick="onRefresh()">↻</button>
+      </div>
+
+      <div class="body">
+        <!-- Leaflet 지도가 여기에 마운트됨. .map-overlay 배지는 디자인 그대로 absolute 유지 -->
+        <div class="map-wrap" id="map-wrap">
+          <div id="map"></div>
+          <div class="map-overlay" id="map-overlay-main"><span class="dot"></span> 실시간 GPS 추적</div>
+        </div>
+
+        <!-- '다음 배송' 액션 패널 -->
+        <div class="next-panel" id="next-panel"></div>
+
+        <!-- 배송 카드 목록 -->
+        <div class="summary-row">
+          <span class="title" id="list-title">배송 0건</span>
+          <span class="count" id="list-count">대기 0 · 완료 0</span>
+        </div>
+
+        <div id="delivery-list-container"></div>
+      </div>
+
+      <div class="footer">
+        <button class="btn btn-primary" onclick="go('screen-scan')">일괄 QR 스캔</button>
+      </div>
+    </section>
+
+
+    <!-- ==========================================================
+         [3] 일괄 QR 스캔 화면 (실제 카메라)
+         ========================================================== -->
+    <section class="screen" id="screen-scan">
+      <div class="app-header">
+        <button class="back" onclick="endScanning()">‹</button>
+        <h2>일괄 QR 스캔</h2>
+        <span class="spacer"></span>
+        <button class="ico-btn" style="background:rgba(255,255,255,0.1); color:#fff;" title="플래시">⚡</button>
+      </div>
+
+      <div class="body">
+        <div style="margin-top:18px; text-align:center; color:rgba(255,255,255,0.85); font-size:13px; padding:0 20px;">
+          오늘 배송할 송장 QR을 차례로 비추세요<br/>
+          한 번 등록된 정보는 배송 중 즉시 조회됩니다
+        </div>
+
+        <div class="scan-frame">
+          <div id="qr-reader"></div>
+          <span class="corner tl"></span>
+          <span class="corner tr"></span>
+          <span class="corner bl"></span>
+          <span class="corner br"></span>
+          <div class="scan-line"></div>
+        </div>
+
+        <div class="scan-progress">
+          <div class="progress-num"><b id="scan-count">0</b> / <span id="scan-total">0</span></div>
+          <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-label">스캔 완료된 송장</div>
+        </div>
+
+        <div class="scan-secure">
+          🔐 NOLABEL 서버에 종단간 암호화로 임시 저장
+        </div>
+      </div>
+
+      <div class="footer">
+        <button class="btn btn-ghost" style="background:rgba(255,255,255,0.08); color:#fff;" onclick="endScanning()">취소</button>
+        <button class="btn btn-success" onclick="endScanning()">스캔 종료 → 목록으로</button>
+      </div>
+    </section>
+
+
+    <!-- ==========================================================
+         [4] 임시 조회 화면
+         ========================================================== -->
+    <section class="screen" id="screen-lookup">
+      <div class="app-header">
+        <button class="back" onclick="cancelLookup()">‹</button>
+        <h2>배송 정보</h2>
+        <span class="spacer"></span>
+        <span class="badge 배송중">배송중</span>
+      </div>
+
+      <div class="body">
+        <div class="map-wrap in-lookup" id="lookup-map-wrap">
+          <div id="lookup-map"></div>
+          <div class="map-overlay" id="map-overlay-lookup"><span class="dot"></span> 실시간 GPS 추적</div>
+        </div>
+
+        <div class="lookup-card">
+          <div class="lookup-head">
+            <div>
+              <div class="lookup-label">배송 번호</div>
+              <div class="lookup-id" id="lookup-id">—</div>
+            </div>
+            <span class="region-chip" id="lookup-region">—</span>
+          </div>
+
+          <div class="lookup-row">
+            <div class="lookup-label">수취인</div>
+            <div class="lookup-value" id="lookup-name">—</div>
+          </div>
+
+          <div class="lookup-row">
+            <div class="lookup-label">주소</div>
+            <div class="lookup-value" id="lookup-address">—</div>
+          </div>
+
+          <div class="lookup-row">
+            <div class="lookup-label">연락처</div>
+            <div class="lookup-value" id="lookup-phone">—</div>
+          </div>
+        </div>
+
+        <div class="lookup-warning">
+          ⚠️ 이 정보는 배송 목적으로만 사용해야 합니다.
+        </div>
+      </div>
+
+      <div class="footer">
+        <button class="btn btn-ghost" onclick="callRecipient()">📞 통화</button>
+        <button class="btn btn-success" onclick="notifyDeliveryDone()">📨 배송 완료 알림</button>
+      </div>
+
+      <div class="toast" id="toast-lookup"></div>
+    </section>
+
+
+    <!-- ==========================================================
+         [5] 완료 안내
+         ========================================================== -->
+    <section class="screen" id="screen-done">
+      <div class="app-header">
+        <button class="back" onclick="go('screen-list')">‹</button>
+        <h2>배송 완료</h2>
+        <span class="spacer"></span>
+        <span class="badge 완료">완료</span>
+      </div>
+
+      <div class="body">
+        <div class="done-icon">✓</div>
+        <h2>배송 완료</h2>
+        <p>
+          수취인에게 <b>완료 알림이 전송</b>되었고<br/>
+          수취인 정보는 <b>즉시 폐기</b>되었습니다.
+        </p>
+
+        <div class="done-meta">
+          <div class="row"><span>배송 번호</span><b id="done-id">—</b></div>
+          <div class="row"><span>지역 코드</span><b id="done-region">—</b></div>
+          <div class="row"><span>완료 시각</span><b id="done-time">방금 전</b></div>
+        </div>
+
+        <div class="done-lock">
+          🔒 정보가 폐기되어 더 이상 조회할 수 없습니다
+        </div>
+      </div>
+
+      <div class="footer">
+        <button class="btn btn-primary" onclick="go('screen-list')">목록으로 돌아가기</button>
+      </div>
+    </section>
+
+
+    <!-- 전역 토스트 -->
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <div class="nav-help">
+    로그인 → 일괄 QR 스캔(출발 전) → 배송 목록·경로 → 카드 탭으로 정보 조회 → 배송 완료 알림 → 완료(정보 폐기)
+  </div>
+</div>
+
+
+<script>
+  /* ===========================================================
+     A. 전역 상태
+     =========================================================== */
+  const DELIVERIES = [];          // 실제 등록되는 송장
+  const scannedIds = new Set();   // 중복 스캔 방지
+  let CURRENT_LOOKUP_ID = null;
+  let LAST_ROUTE_INFO = null;     // { km, min, optimized: bool }
+
+  const DEFAULT_CENTER = [37.881, 127.730]; // 춘천 기본 중심
+  const DEFAULT_ZOOM = 13;
+
+  let mainMap = null, lookupMap = null;
+  let mainMarkers = {}, lookupMarker = null;
+  let driverMarker = null, lookupDriverMarker = null;
+  let routePolyline = null;
+  let driverPos = null;            // { lat, lng }
+  let watchId = null;
+  let qrScanner = null;
+
+  /* ===========================================================
+     B. 화면 전환
+     =========================================================== */
+  function go(screenId) {
+    document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+    const target = document.getElementById(screenId);
+    if (!target) return;
+    target.classList.add("active");
+    target.scrollTop = 0;
+    const body = target.querySelector(".body");
+    if (body) body.scrollTop = 0;
+
+    if (screenId === "screen-list") {
+      ensureMainMap();
+      startGeolocationOnce();
+    } else if (screenId === "screen-lookup") {
+      ensureLookupMap();
+    } else if (screenId === "screen-scan") {
+      updateScanProgress();
+      startQrScanner();
+    }
+
+    // 스캔 화면이 아니면 카메라 중지
+    if (screenId !== "screen-scan") {
+      stopQrScanner();
+    }
+  }
+
+  /* ===========================================================
+     C. Leaflet 지도 초기화
+     =========================================================== */
+  function ensureMainMap() {
+    if (mainMap) {
+      setTimeout(() => mainMap.invalidateSize(), 100);
+      return;
+    }
+    mainMap = L.map('map', {
+      zoomControl: false,
+      attributionControl: true
+    }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(mainMap);
+    L.control.zoom({ position: 'bottomright' }).addTo(mainMap);
+    setTimeout(() => {
+      mainMap.invalidateSize();
+      renderMainMarkers();
+      if (driverPos) updateDriverMarker();
+    }, 120);
+  }
+
+  function ensureLookupMap() {
+    if (lookupMap) {
+      setTimeout(() => lookupMap.invalidateSize(), 100);
+      return;
+    }
+    lookupMap = L.map('lookup-map', {
+      zoomControl: false,
+      attributionControl: true
+    }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(lookupMap);
+    setTimeout(() => lookupMap.invalidateSize(), 120);
+  }
+
+  /* ===========================================================
+     D. 핀/드라이버 마커 아이콘
+     =========================================================== */
+  function makePinIcon(order, done, active) {
+    const cls = ['pin-icon', done ? 'done' : '', active ? 'active' : '']
+      .filter(Boolean).join(' ');
+    const label = done ? '✓' : order;
+    const w = active ? 36 : 32;
+    const h = active ? 44 : 38;
+    return L.divIcon({
+      className: 'pin-icon-wrap',
+      html: `<div class="${cls}"><div class="head">${label}</div><div class="tail"></div></div>`,
+      iconSize: [w, h],
+      iconAnchor: [w/2, h]
+    });
+  }
+
+  function makeDriverIcon() {
+    return L.divIcon({
+      className: 'driver-marker-wrap',
+      html: '<div class="driver-marker-icon"><span class="dm-pulse"></span><span class="dm-dot"></span></div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+  }
+
+  /* ===========================================================
+     E. 메인 지도 마커 렌더
+     =========================================================== */
+  function renderMainMarkers() {
+    if (!mainMap) return;
+    // 기존 핀 모두 제거
+    Object.values(mainMarkers).forEach(m => mainMap.removeLayer(m));
+    mainMarkers = {};
+
+    const sorted = [...DELIVERIES].sort((a, b) => a.order - b.order);
+    sorted.forEach(d => {
+      if (typeof d.lat !== 'number' || typeof d.lng !== 'number') return;
+      const done = d.status === '완료';
+      const marker = L.marker([d.lat, d.lng], {
+        icon: makePinIcon(d.order, done, false)
+      }).addTo(mainMap);
+      marker.on('click', () => openDelivery(d.id));
+      mainMarkers[d.id] = marker;
+    });
+
+    fitMainBounds();
+  }
+
+  function fitMainBounds() {
+    if (!mainMap) return;
+    const pts = [];
+    DELIVERIES.forEach(d => {
+      if (typeof d.lat === 'number' && typeof d.lng === 'number') pts.push([d.lat, d.lng]);
+    });
+    if (driverPos) pts.push([driverPos.lat, driverPos.lng]);
+    if (pts.length >= 2) {
+      mainMap.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 15 });
+    } else if (pts.length === 1) {
+      mainMap.setView(pts[0], 14);
+    }
+  }
+
+  function updateDriverMarker() {
+    if (!driverPos) return;
+    const pos = [driverPos.lat, driverPos.lng];
+    if (mainMap) {
+      if (driverMarker) driverMarker.setLatLng(pos);
+      else driverMarker = L.marker(pos, {
+        icon: makeDriverIcon(),
+        interactive: false,
+        zIndexOffset: 1000
+      }).addTo(mainMap);
+      document.getElementById('map-overlay-main')?.classList.add('live');
+    }
+    if (lookupMap) {
+      if (lookupDriverMarker) lookupDriverMarker.setLatLng(pos);
+      else lookupDriverMarker = L.marker(pos, {
+        icon: makeDriverIcon(),
+        interactive: false,
+        zIndexOffset: 1000
+      }).addTo(lookupMap);
+      document.getElementById('map-overlay-lookup')?.classList.add('live');
+    }
+  }
+
+  /* ===========================================================
+     F. Geolocation
+     =========================================================== */
+  let geoStarted = false;
+  function startGeolocationOnce() {
+    if (geoStarted) return;
+    geoStarted = true;
+    if (!navigator.geolocation) {
+      toast('이 브라우저는 위치 정보를 지원하지 않습니다');
+      return;
+    }
+    watchId = navigator.geolocation.watchPosition(
+      pos => {
+        const first = !driverPos;
+        driverPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        updateDriverMarker();
+        if (first) fitMainBounds();
+      },
+      err => {
+        console.warn('Geolocation error:', err);
+        toast('위치 권한이 거부되어 배송지 영역으로 표시합니다');
+        fitMainBounds();
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+  }
+
+  /* ===========================================================
+     G. 목록 렌더
+     =========================================================== */
+  function renderList() {
+    const container = document.getElementById("delivery-list-container");
+    if (!container) return;
+    container.innerHTML = "";
+
+    if (DELIVERIES.length === 0) {
+      container.innerHTML = `
+        <div class="empty-list">
+          <b>등록된 배송이 없습니다</b>
+          하단 '일괄 QR 스캔'으로 송장을 등록하세요.
+        </div>`;
+    } else {
+      const sorted = [...DELIVERIES].sort((a, b) => {
+        const aDone = a.status === "완료" ? 1 : 0;
+        const bDone = b.status === "완료" ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        return a.order - b.order;
+      });
+      const nextIdx = sorted.findIndex(d => d.status !== "완료");
+
+      sorted.forEach((d, idx) => {
+        const card = document.createElement("div");
+        const isDone = d.status === "완료";
+        const isNext = idx === nextIdx;
+        card.className = "delivery-card"
+          + (isDone ? " is-done" : "")
+          + (isNext ? " is-next" : "");
+        card.onclick = () => openDelivery(d.id);
+
+        const metaText = isDone
+          ? '<span class="privacy">🔒 정보 폐기됨</span>'
+          : '<span class="privacy">🔓 탭하여 주소 확인</span>';
+
+        card.innerHTML = `
+          <div class="row head">
+            <span class="order-no">${isDone ? '✓' : d.order}</span>
+            <span class="region-chip">${escapeHtml(d.region)}</span>
+            <span class="spacer"></span>
+            <span class="badge ${d.status}">${d.status}</span>
+          </div>
+          <div class="delivery-id">${escapeHtml(d.id)}</div>
+          <div class="delivery-meta">
+            <span>📦 일반 · 표준배송</span>
+            ${metaText}
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // 요약
+    const counts = DELIVERIES.reduce((acc, d) => {
+      acc[d.status] = (acc[d.status] || 0) + 1;
+      return acc;
+    }, {});
+    document.getElementById("list-title").textContent =
+      `배송 ${DELIVERIES.length}건`;
+    document.getElementById("list-count").textContent =
+      `대기 ${counts["대기"] || 0} · 배송중 ${counts["배송중"] || 0} · 완료 ${counts["완료"] || 0}`;
+
+    renderNextPanel();
+    renderMainMarkers();
+  }
+
+  /* '다음 배송' 액션 패널 */
+  function renderNextPanel() {
+    const panel = document.getElementById("next-panel");
+    if (!panel) return;
+    const total = DELIVERIES.length;
+    const doneCount = DELIVERIES.filter(d => d.status === "완료").length;
+    const pct = total > 0 ? (doneCount / total) * 100 : 0;
+
+    if (total === 0) {
+      panel.innerHTML = `
+        <div class="next-empty">
+          <span class="tag gray">대기</span>
+          <div>
+            <b>아직 등록된 배송이 없어요</b><br/>
+            <small style="color:var(--ink-3)">'일괄 QR 스캔'으로 시작하세요</small>
+          </div>
+        </div>
+        <div class="next-actions" style="margin-top:12px;">
+          <button class="np-btn np-ai" disabled>🤖 AI 최적 경로 계산 ▸</button>
+        </div>
+      `;
+      return;
+    }
+
+    const sorted = [...DELIVERIES].sort((a, b) => a.order - b.order);
+    const next = sorted.find(d => d.status !== "완료");
+
+    const routeText = LAST_ROUTE_INFO
+      ? `AI 최적 · ${LAST_ROUTE_INFO.km.toFixed(1)}km · 약 ${LAST_ROUTE_INFO.min}분`
+      : `${total}건 등록됨 · 경로 미계산`;
+
+    if (!next) {
+      panel.innerHTML = `
+        <div class="next-empty">
+          <span class="tag">완료</span>
+          <div><b>오늘 배송 ${total}건 모두 완료</b><br/>
+            <small style="color:var(--ink-3)">수고하셨습니다.</small></div>
+        </div>
+      `;
+      return;
+    }
+
+    panel.innerHTML = `
+      <div class="next-head">
+        <div class="next-badge">${next.order}</div>
+        <div class="next-meta">
+          <b>다음 배송 · ${escapeHtml(next.region)}</b>
+          <small>🔓 탭하여 수취인 주소·연락처 확인</small>
+        </div>
+        <span class="next-eta">약 5분</span>
+      </div>
+      <div class="next-progress">
+        <div class="next-progress-text">
+          <span><b>${doneCount}</b> / ${total} 완료</span>
+          <span>${routeText}</span>
+        </div>
+        <div class="next-bar"><i style="width:${pct}%"></i></div>
+      </div>
+      <div class="next-actions">
+        <button class="np-btn np-call" onclick="toast('📞 익명 중계 전화로 연결합니다')">📞 통화</button>
+        <button class="np-btn np-go" onclick="openDelivery('${next.id}')">배송 정보 보기 ▸</button>
+      </div>
+      <div class="next-actions" style="margin-top:8px;">
+        <button class="np-btn np-ai" onclick="optimizeRoute()">🤖 AI 최적 경로 계산 ▸</button>
+      </div>
+    `;
+  }
+
+  function toggleCheck(el) {
+    const on = el.classList.toggle("on");
+    el.setAttribute("aria-checked", on ? "true" : "false");
+  }
+
+  /* ===========================================================
+     H. QR 스캐너
+     =========================================================== */
+  function startQrScanner() {
+    if (qrScanner) return;
+    const el = document.getElementById('qr-reader');
+    if (!el || typeof Html5Qrcode === 'undefined') return;
+    qrScanner = new Html5Qrcode('qr-reader', { verbose: false });
+    qrScanner.start(
+      { facingMode: { exact: 'environment' } },
+      { fps: 10, qrbox: { width: 220, height: 220 } },
+      onScanSuccess,
+      () => {}
+    ).catch(() => {
+      // 후면 카메라 강제 실패 시 일반 환경 카메라로 폴백
+      qrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        onScanSuccess,
+        () => {}
+      ).catch(err2 => {
+        console.error('QR scanner start failed:', err2);
+        toast('카메라를 시작할 수 없습니다 (권한 확인)');
+        qrScanner = null;
+      });
+    });
+  }
+
+  function stopQrScanner() {
+    if (!qrScanner) return;
+    const s = qrScanner;
+    qrScanner = null;
+    s.stop().then(() => { try { s.clear(); } catch (_) {} }).catch(() => {});
+  }
+
+  function onScanSuccess(decodedText) {
+    let data;
+    try {
+      data = JSON.parse(decodedText);
+    } catch (e) {
+      toast('유효하지 않은 송장 QR');
+      return;
+    }
+    if (!data || typeof data !== 'object' || !data.id || !data.name) {
+      toast('유효하지 않은 송장 QR');
+      return;
+    }
+    if (scannedIds.has(data.id)) return; // 중복
+    scannedIds.add(data.id);
+
+    const order = DELIVERIES.length + 1;
+    const d = {
+      region: data.region || `CC-${String(order).padStart(2, '0')}`,
+      id: String(data.id),
+      name: String(data.name),
+      address: String(data.address || ''),
+      phone: String(data.phone || ''),
+      lat: typeof data.lat === 'number' ? data.lat : null,
+      lng: typeof data.lng === 'number' ? data.lng : null,
+      status: '배송중',
+      order
+    };
+    DELIVERIES.push(d);
+
+    if (navigator.vibrate) navigator.vibrate(80);
+    toast(`✓ ${d.name} 등록 (${DELIVERIES.length}건)`);
+    updateScanProgress();
+
+    // 백그라운드로 메인 지도에도 즉시 마커 추가 (지도가 이미 init된 경우)
+    if (mainMap && typeof d.lat === 'number' && typeof d.lng === 'number') {
+      const m = L.marker([d.lat, d.lng], { icon: makePinIcon(d.order, false, false) })
+        .addTo(mainMap);
+      m.on('click', () => openDelivery(d.id));
+      mainMarkers[d.id] = m;
+    }
+  }
+
+  function updateScanProgress() {
+    const count = DELIVERIES.length;
+    const total = Math.max(count, count); // 동적 — 총 등록 건수
+    const countEl = document.getElementById('scan-count');
+    const totalEl = document.getElementById('scan-total');
+    const fillEl = document.getElementById('progress-fill');
+    if (countEl) countEl.textContent = count;
+    if (totalEl) totalEl.textContent = count === 0 ? '–' : count;
+    if (fillEl) fillEl.style.width = count > 0 ? '100%' : '0%';
+  }
+
+  function endScanning() {
+    stopQrScanner();
+    renderList();
+    go('screen-list');
+    if (DELIVERIES.length > 0) toast(`${DELIVERIES.length}건의 송장이 등록되었습니다`);
+  }
+
+  function onRefresh() {
+    renderList();
+    if (mainMap) fitMainBounds();
+    toast('동기화 완료');
+  }
+
+  /* ===========================================================
+     I. 배송 정보 조회 / 완료
+     =========================================================== */
+  function openDelivery(id) {
+    const item = DELIVERIES.find(d => d.id === id);
+    if (!item) return;
+    CURRENT_LOOKUP_ID = id;
+
+    if (item.status === "대기") {
+      toast("출발 전 '일괄 QR 스캔'을 먼저 진행해주세요");
+      return;
+    }
+    if (item.status === "완료") {
+      populateDone(item);
+      go("screen-done");
+      return;
+    }
+    populateLookup(item);
+    go("screen-lookup");
+  }
+
+  function populateLookup(item) {
+    document.getElementById("lookup-id").textContent = item.id;
+    document.getElementById("lookup-region").textContent = `${item.order}번째`;
+    document.getElementById("lookup-name").textContent = item.name;
+    document.getElementById("lookup-address").textContent = item.address || '(주소 미등록)';
+    document.getElementById("lookup-phone").textContent = item.phone || '—';
+
+    // 미니맵: 해당 배송지 중심
+    setTimeout(() => {
+      if (!lookupMap) return;
+      if (lookupMarker) { lookupMap.removeLayer(lookupMarker); lookupMarker = null; }
+      if (typeof item.lat === 'number' && typeof item.lng === 'number') {
+        lookupMarker = L.marker([item.lat, item.lng], {
+          icon: makePinIcon(item.order, item.status === '완료', true)
+        }).addTo(lookupMap);
+        lookupMap.setView([item.lat, item.lng], 15);
+      }
+      lookupMap.invalidateSize();
+    }, 150);
+  }
+
+  function cancelLookup() { go("screen-list"); }
+
+  function callRecipient() {
+    toastInScreen("toast-lookup", "📞 익명 중계 전화로 연결합니다");
+  }
+
+  function notifyDeliveryDone() {
+    const item = DELIVERIES.find(d => d.id === CURRENT_LOOKUP_ID);
+    if (!item) return;
+    item.status = "완료";
+    populateDone(item);
+    renderList();
+    toast("📨 수취인에게 배송 완료 알림을 전송했습니다");
+    go("screen-done");
+  }
+
+  function populateDone(item) {
+    if (!item) return;
+    document.getElementById("done-id").textContent = item.id;
+    document.getElementById("done-region").textContent = item.region;
+    const now = new Date();
+    document.getElementById("done-time").textContent =
+      `${now.getHours()}:${now.getMinutes().toString().padStart(2,'0')}`;
+  }
+
+  /* ===========================================================
+     J. AI 최적 경로 (서버리스 함수 호출)
+     =========================================================== */
+  async function optimizeRoute() {
+    const valid = DELIVERIES.filter(d => typeof d.lat === 'number' && typeof d.lng === 'number');
+    if (valid.length === 0) {
+      toast('좌표가 등록된 배송지가 없습니다');
+      return;
+    }
+    const start = driverPos || { lat: valid[0].lat, lng: valid[0].lng };
+    toast('🤖 AI가 최적 경로를 계산 중...');
+
+    try {
+      const res = await fetch('/api/optimize-route', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          start,
+          deliveries: valid.map(d => ({
+            id: d.id, address: d.address, lat: d.lat, lng: d.lng
+          }))
+        })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const order = Array.isArray(data.order) ? data.order : valid.map(d => d.id);
+
+      // order에 맞춰 DELIVERIES 의 order 재배정 (좌표 없는 항목은 뒤로)
+      let idx = 1;
+      order.forEach(id => {
+        const d = DELIVERIES.find(x => x.id === id);
+        if (d) d.order = idx++;
+      });
+      DELIVERIES.filter(d => !order.includes(d.id)).forEach(d => { d.order = idx++; });
+
+      drawRoutePolyline(start);
+
+      const km = computeTotalKm(start);
+      const min = Math.round(km * 2);   // ≈ 30km/h
+      LAST_ROUTE_INFO = { km, min, optimized: true };
+
+      renderList();
+      toast(`✨ AI 최적 경로 · ${km.toFixed(1)}km · 약 ${min}분`);
+    } catch (e) {
+      console.error('optimizeRoute failed:', e);
+      toast('경로 최적화 실패: ' + (e.message || e));
+    }
+  }
+
+  function drawRoutePolyline(start) {
+    if (!mainMap) return;
+    if (routePolyline) { mainMap.removeLayer(routePolyline); routePolyline = null; }
+    const sorted = [...DELIVERIES]
+      .filter(d => typeof d.lat === 'number' && typeof d.lng === 'number')
+      .sort((a, b) => a.order - b.order);
+    const pts = [[start.lat, start.lng], ...sorted.map(d => [d.lat, d.lng])];
+    if (pts.length < 2) return;
+    routePolyline = L.polyline(pts, {
+      color: '#2b59ff', weight: 4, opacity: 0.85, lineJoin: 'round'
+    }).addTo(mainMap);
+    fitMainBounds();
+  }
+
+  function computeTotalKm(start) {
+    const sorted = [...DELIVERIES]
+      .filter(d => typeof d.lat === 'number' && typeof d.lng === 'number')
+      .sort((a, b) => a.order - b.order);
+    let total = 0;
+    let prev = start;
+    for (const d of sorted) {
+      total += haversineKm(prev, d);
+      prev = d;
+    }
+    return total;
+  }
+
+  function haversineKm(a, b) {
+    const R = 6371;
+    const toRad = x => x * Math.PI / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const s = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  /* ===========================================================
+     K. 유틸 / 토스트
+     =========================================================== */
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._tm);
+    toast._tm = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+  function toastInScreen(id, msg) {
+    const t = document.getElementById(id);
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  /* ===========================================================
+     L. 초기화
+     =========================================================== */
+  renderList();
+</script>
+
+</body>
+</html>
