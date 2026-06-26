@@ -236,10 +236,6 @@
       <div class="qr-box" id="qr-box">
         <div style="color:var(--ink-3); font-size:13px;">좌표·정보 입력 후 'QR 생성'을 눌러주세요.</div>
       </div>
-      <small style="display:block; margin-top:10px; color:var(--ink-3);">
-        스캔되는 JSON 형식:<br/>
-        <code style="font-size:10.5px;">{"id":"...","name":"...","address":"...","phone":"...","lat":37.88,"lng":127.73}</code>
-      </small>
     </div>
   </div>
 </div>
@@ -363,15 +359,12 @@
     img.style.cssText = 'display:block; width:240px; height:auto; image-rendering:pixelated; border-radius:6px;';
     box.appendChild(img);
 
-    // (4) JSON 텍스트 함께 표시 (디버깅·복사용)
-    const jsonBox = document.createElement('div');
-    jsonBox.style.cssText =
-      'margin-top:12px; padding:10px 12px; background:#f3f5fb; border-radius:8px;' +
-      'font-family:"SF Mono",ui-monospace,monospace; font-size:11px; color:#1a2233;' +
-      'word-break:break-all; line-height:1.5; width:100%; text-align:left;' +
-      'user-select:all; cursor:text;';
-    jsonBox.textContent = text;
-    box.appendChild(jsonBox);
+    // (4) 생성 완료 메시지
+    const okMsg = document.createElement('div');
+    okMsg.style.cssText =
+      'margin-top:12px; color:#00875a; font-size:12px; font-weight:700; text-align:center;';
+    okMsg.textContent = '✓ QR 이 생성되었습니다';
+    box.appendChild(okMsg);
   }
 
   // 첫 진입 시 데모 1 자동 로드 — 라이브러리 로드 Promise 를 await
