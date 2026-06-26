@@ -9,7 +9,15 @@
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+<script>
+  window.__qrLibLoaded = false;
+  window.__qrLibError  = null;
+</script>
+<script
+  src="https://unpkg.com/html5-qrcode"
+  onload="window.__qrLibLoaded = true; console.log('[QR] ✓ html5-qrcode CDN loaded');"
+  onerror="window.__qrLibError = 'CDN load failed'; console.error('[QR] ✗ html5-qrcode CDN failed to load');"
+></script>
 
 <style>
   /* ===========================================================
@@ -644,15 +652,35 @@
     background: #000;
     z-index: 1;
   }
+  /* html5-qrcode 내부 구조에서 라이브러리 대시보드만 숨기고,
+     scan_region 사이즈는 건드리지 않는다 (건드리면 video 가 0x0 으로 깔린다). */
+  #qr-reader__dashboard,
+  #qr-reader__header_message,
+  #qr-reader__scan_region img { display: none !important; }
   #qr-reader video {
     width: 100% !important;
     height: 100% !important;
     object-fit: cover;
+    background: #000;
   }
-  #qr-reader__dashboard,
-  #qr-reader__scan_region img,
-  #qr-reader__header_message { display: none !important; }
-  #qr-reader__scan_region { background: transparent !important; min-height: 0 !important; padding: 0 !important; }
+  /* 스캐너 에러/상태 메시지 (CDN 실패, 권한 거부 등) */
+  .qr-error {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 18px;
+    border-radius: 14px;
+    background: rgba(15,20,36,0.92);
+    color: #ff8a8a;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.5;
+    pointer-events: none;
+  }
   .corner {
     position: absolute;
     width: 30px; height: 30px;
@@ -1076,6 +1104,7 @@
 
         <div class="scan-frame">
           <div id="qr-reader"></div>
+          <div id="qr-error" class="qr-error" style="display:none;"></div>
           <span class="corner tl"></span>
           <span class="corner tr"></span>
           <span class="corner bl"></span>
@@ -1547,36 +1576,110 @@
   /* ===========================================================
      H. QR 스캐너
      =========================================================== */
-  function startQrScanner() {
-    if (qrScanner) return;
+  function showScanError(msg) {
+    const el = document.getElementById('qr-error');
+    if (el) { el.textContent = '⚠️ ' + msg; el.style.display = 'flex'; }
+    console.error('[QR]', msg);
+    toast(msg);
+  }
+  function hideScanError() {
+    const el = document.getElementById('qr-error');
+    if (el) { el.style.display = 'none'; el.textContent = ''; }
+  }
+
+  async function startQrScanner() {
+    console.log('[QR] startQrScanner() called');
+    if (qrScanner) { console.log('[QR] already running, skip'); return; }
+    hideScanError();
+
+    // (1) CDN 로드 확인
+    if (window.__qrLibError || typeof Html5Qrcode === 'undefined') {
+      showScanError('스캐너 라이브러리 로드 실패 (네트워크/CDN 확인)');
+      return;
+    }
+    console.log('[QR] ✓ Html5Qrcode available');
+
+    // (2) 컨테이너 확인 + 실제 크기 측정
     const el = document.getElementById('qr-reader');
-    if (!el || typeof Html5Qrcode === 'undefined') return;
-    qrScanner = new Html5Qrcode('qr-reader', { verbose: false });
-    qrScanner.start(
-      { facingMode: { exact: 'environment' } },
-      { fps: 10, qrbox: { width: 220, height: 220 } },
-      onScanSuccess,
-      () => {}
-    ).catch(() => {
-      // 후면 카메라 강제 실패 시 일반 환경 카메라로 폴백
-      qrScanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 220, height: 220 } },
-        onScanSuccess,
-        () => {}
-      ).catch(err2 => {
-        console.error('QR scanner start failed:', err2);
-        toast('카메라를 시작할 수 없습니다 (권한 확인)');
+    if (!el) {
+      showScanError('스캐너 컨테이너를 찾을 수 없습니다 (#qr-reader)');
+      return;
+    }
+    // 화면 전환 직후 layout 이 적용되도록 한 프레임 대기
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const rect = el.getBoundingClientRect();
+    console.log('[QR] container size:', Math.round(rect.width) + 'x' + Math.round(rect.height));
+    if (rect.width === 0 || rect.height === 0) {
+      showScanError('컨테이너 크기가 0입니다 (' + rect.width + 'x' + rect.height + ')');
+      return;
+    }
+
+    // (3) 인스턴스 생성
+    try {
+      qrScanner = new Html5Qrcode('qr-reader', { verbose: false });
+    } catch (e) {
+      showScanError('스캐너 초기화 실패: ' + (e && e.message || e));
+      qrScanner = null;
+      return;
+    }
+
+    const config = { fps: 10, qrbox: { width: 220, height: 220 }, aspectRatio: 1.0 };
+
+    // (4) 시작 — environment → user → enumerate 순으로 단계적 폴백
+    //     exact 제약은 데스크톱에서 OverconstrainedError 를 던지므로 처음부터 안 씀.
+    const attempts = [
+      { label: 'facingMode:environment', source: { facingMode: 'environment' } },
+      { label: 'facingMode:user',        source: { facingMode: 'user' } }
+    ];
+
+    for (const a of attempts) {
+      try {
+        console.log('[QR] start() try:', a.label);
+        await qrScanner.start(a.source, config, onScanSuccess, () => {});
+        console.log('[QR] ✓ start success:', a.label);
+        return;
+      } catch (err) {
+        console.warn('[QR] ✗ start failed (' + a.label + '):', err && (err.message || err.name || err));
+        // 다음 시도 위해 인스턴스 재생성
+        try { await qrScanner.stop(); } catch (_) {}
+        try { qrScanner.clear(); } catch (_) {}
+        qrScanner = new Html5Qrcode('qr-reader', { verbose: false });
+      }
+    }
+
+    // (5) 마지막 폴백: 카메라 enumerate
+    try {
+      console.log('[QR] fallback → Html5Qrcode.getCameras()');
+      const cams = await Html5Qrcode.getCameras();
+      console.log('[QR] cameras found:', cams);
+      if (!cams || cams.length === 0) {
+        showScanError('사용 가능한 카메라가 없습니다');
         qrScanner = null;
-      });
-    });
+        return;
+      }
+      // 후면 카메라 추정 (라벨에 back/rear/environment 포함)
+      const backCam = cams.find(c => /back|rear|environment|후면/i.test(c.label)) || cams[cams.length - 1];
+      await qrScanner.start(backCam.id, config, onScanSuccess, () => {});
+      console.log('[QR] ✓ start success via id:', backCam.id, backCam.label);
+    } catch (err) {
+      const reason = (err && (err.message || err.name)) || String(err);
+      showScanError('카메라 시작 실패: ' + reason);
+      qrScanner = null;
+    }
   }
 
   function stopQrScanner() {
     if (!qrScanner) return;
     const s = qrScanner;
     qrScanner = null;
-    s.stop().then(() => { try { s.clear(); } catch (_) {} }).catch(() => {});
+    console.log('[QR] stopQrScanner()');
+    s.stop().then(() => {
+      try { s.clear(); } catch (_) {}
+      console.log('[QR] ✓ stopped');
+    }).catch(err => {
+      console.warn('[QR] stop error (ignored):', err && err.message);
+    });
+    hideScanError();
   }
 
   function onScanSuccess(decodedText) {
