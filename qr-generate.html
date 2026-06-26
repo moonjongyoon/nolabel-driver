@@ -109,9 +109,26 @@
     box-shadow: 0 4px 14px rgba(20,30,60,0.05);
   }
   .card h3 { margin: 0 0 10px; font-size: 14px; }
-  #map { height: 380px; border-radius: 10px; overflow: hidden; }
+  .form-hint { font-size: 11px; color: var(--ink-3); margin: -4px 0 0; }
+
+  /* 지오코딩 실패 폴백 섹션 (기본 숨김) */
+  #fallback-section {
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid #f0d99a;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #fff8e8, #fff1d3);
+  }
+  #fallback-section .warn {
+    font-size: 12.5px;
+    color: #6b4500;
+    font-weight: 700;
+    margin-bottom: 8px;
+    display: flex; gap: 6px; align-items: center;
+  }
+  #map { height: 280px; border-radius: 10px; overflow: hidden; }
   .coord-row {
-    display: flex; gap: 8px; margin-top: 10px;
+    display: flex; gap: 8px; margin-top: 10px; align-items: center;
     font-size: 12px; color: var(--ink-2);
   }
   .coord-row code {
@@ -119,6 +136,14 @@
     padding: 4px 8px; border-radius: 6px;
     font-family: "SF Mono", ui-monospace, monospace;
   }
+  .geo-status {
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    min-height: 16px;
+  }
+  .geo-status.ok { color: var(--accent); font-weight: 700; }
+  .geo-status.err { color: #b42318; font-weight: 700; }
 
   .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
   .form-group label { font-size: 11px; font-weight: 700; color: var(--ink-2); letter-spacing: 0.3px; }
@@ -185,16 +210,10 @@
   <p class="sub">지도에서 배송지 위치를 클릭한 뒤 정보를 입력하고 'QR 생성'을 누르세요. 생성된 QR을 기사 앱에서 스캔하면 등록됩니다.</p>
 
   <div class="grid">
-    <!-- 왼쪽: 지도 + 폼 -->
+    <!-- 왼쪽: 폼 (지도는 폴백) -->
     <div class="card">
-      <h3>1) 배송지 좌표 선택 (지도 클릭)</h3>
-      <div id="map"></div>
-      <div class="coord-row">
-        <span>선택 좌표:</span>
-        <code id="coord-text">아직 선택되지 않음</code>
-      </div>
+      <h3>송장 정보 입력</h3>
 
-      <h3 style="margin-top:18px;">2) 송장 정보 입력</h3>
       <div class="form-group">
         <label>송장 ID</label>
         <input id="f-id" placeholder="ND-2026-0608-001" />
@@ -204,8 +223,9 @@
         <input id="f-name" placeholder="김민준" />
       </div>
       <div class="form-group">
-        <label>주소</label>
+        <label>주소 ★</label>
         <input id="f-address" placeholder="강원도 춘천시 효자동 123-45" />
+        <p class="form-hint">생성 시 OpenStreetMap 지오코더로 좌표가 자동 변환됩니다.</p>
       </div>
       <div class="form-group">
         <label>연락처</label>
@@ -221,13 +241,26 @@
         <button class="btn ghost" onclick="nextPreset()">⏭ 다음 데모 송장</button>
       </div>
 
+      <div id="geo-status" class="geo-status"></div>
+
       <div class="preset-list">
         <button onclick="loadPreset(0)">데모 1 · 김민준</button>
         <button onclick="loadPreset(1)">데모 2 · 이서연</button>
         <button onclick="loadPreset(2)">데모 3 · 박지호</button>
         <button onclick="loadPreset(3)">데모 4 · 최수아</button>
       </div>
-      <p class="hint">💡 PC 화면을 켜둔 채 기사 앱(아이폰 Safari)에서 카메라를 비추면 됩니다.</p>
+      <p class="hint" style="font-size:11px; color:var(--ink-3); margin-top:8px;">💡 PC 화면을 켜둔 채 기사 앱(아이폰 Safari)에서 카메라를 비추면 됩니다.</p>
+
+      <!-- 지오코딩 실패 시만 노출되는 보정용 미니맵 -->
+      <div id="fallback-section" style="display:none;">
+        <div class="warn">⚠️ <span>주소를 좌표로 변환하지 못했습니다. 지도에서 위치를 직접 찍어 보정하세요</span></div>
+        <div id="map"></div>
+        <div class="coord-row">
+          <span>선택 좌표:</span>
+          <code id="coord-text">아직 선택되지 않음</code>
+        </div>
+        <button class="btn" style="margin-top:10px;" onclick="generateWithPickedCoords()">선택 좌표로 QR 생성 ▸</button>
+      </div>
     </div>
 
     <!-- 오른쪽: QR 결과 -->
@@ -241,51 +274,109 @@
 </div>
 
 <script>
+  /* ===========================================================
+     상태
+     =========================================================== */
   let selectedLat = null, selectedLng = null;
-  let pickedMarker = null;
+  let fallbackMap = null, pickedMarker = null;
+  const geocodeCache = new Map();   // 주소 → {lat,lng} | null
+  let lastGeoCallAt = 0;            // Nominatim 1초 throttle
 
-  const map = L.map('map').setView([37.881, 127.730], 13);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
-
-  map.on('click', (e) => {
-    selectedLat = +e.latlng.lat.toFixed(5);
-    selectedLng = +e.latlng.lng.toFixed(5);
-    document.getElementById('coord-text').textContent =
-      `lat=${selectedLat}, lng=${selectedLng}`;
-    if (pickedMarker) map.removeLayer(pickedMarker);
-    pickedMarker = L.marker([selectedLat, selectedLng]).addTo(map);
-  });
-
-  // 데모 프리셋 (춘천 부근)
+  /* ===========================================================
+     데모 프리셋 (춘천 부근) — 주소 → 좌표 미리 캐시해서
+     데모 시 Nominatim 호출 없이 즉시 동작.
+     =========================================================== */
   const PRESETS = [
-    { id: "ND-2026-0608-001", name: "김민준", address: "강원도 춘천시 효자동 123-45", phone: "010-1234-5678", region: "CC-01", lat: 37.8765, lng: 127.7320 },
-    { id: "ND-2026-0608-002", name: "이서연", address: "강원도 춘천시 석사동 567-89", phone: "010-2345-6789", region: "CC-02", lat: 37.8694, lng: 127.7427 },
-    { id: "ND-2026-0608-003", name: "박지호", address: "강원도 춘천시 후평동 234-56 NOLABEL빌딩 302호", phone: "010-3456-7890", region: "CC-03", lat: 37.8800, lng: 127.7530 },
-    { id: "ND-2026-0608-004", name: "최수아", address: "강원도 춘천시 퇴계동 891-23", phone: "010-4567-8901", region: "CC-04", lat: 37.8580, lng: 127.7240 }
+    { id: "ND-2026-0608-001", name: "김민준", address: "강원도 춘천시 효자동 123-45",                       phone: "010-1234-5678", region: "CC-01", lat: 37.8765, lng: 127.7320 },
+    { id: "ND-2026-0608-002", name: "이서연", address: "강원도 춘천시 석사동 567-89",                       phone: "010-2345-6789", region: "CC-02", lat: 37.8694, lng: 127.7427 },
+    { id: "ND-2026-0608-003", name: "박지호", address: "강원도 춘천시 후평동 234-56 NOLABEL빌딩 302호",     phone: "010-3456-7890", region: "CC-03", lat: 37.8800, lng: 127.7530 },
+    { id: "ND-2026-0608-004", name: "최수아", address: "강원도 춘천시 퇴계동 891-23",                       phone: "010-4567-8901", region: "CC-04", lat: 37.8580, lng: 127.7240 }
   ];
+  PRESETS.forEach(p => geocodeCache.set(p.address.trim(), { lat: p.lat, lng: p.lng }));
+
   let presetIdx = 0;
   function loadPreset(i) {
     const p = PRESETS[i];
     if (!p) return;
     presetIdx = i;
-    document.getElementById('f-id').value = p.id;
-    document.getElementById('f-name').value = p.name;
+    document.getElementById('f-id').value      = p.id;
+    document.getElementById('f-name').value    = p.name;
     document.getElementById('f-address').value = p.address;
-    document.getElementById('f-phone').value = p.phone;
-    document.getElementById('f-region').value = p.region;
-    selectedLat = p.lat; selectedLng = p.lng;
-    document.getElementById('coord-text').textContent = `lat=${p.lat}, lng=${p.lng}`;
-    if (pickedMarker) map.removeLayer(pickedMarker);
-    pickedMarker = L.marker([p.lat, p.lng]).addTo(map);
-    map.setView([p.lat, p.lng], 14);
+    document.getElementById('f-phone').value   = p.phone;
+    document.getElementById('f-region').value  = p.region;
+    selectedLat = null; selectedLng = null;
+    hideFallback();
+    setGeoStatus('');
   }
   function nextPreset() {
     presetIdx = (presetIdx + 1) % PRESETS.length;
     loadPreset(presetIdx);
     generateQR();
+  }
+
+  /* ===========================================================
+     Nominatim 지오코딩
+     =========================================================== */
+  function setGeoStatus(msg, kind) {
+    const el = document.getElementById('geo-status');
+    el.textContent = msg || '';
+    el.className = 'geo-status' + (kind ? ' ' + kind : '');
+  }
+
+  async function geocode(address) {
+    const key = address.trim();
+    if (!key) return null;
+    if (geocodeCache.has(key)) {
+      console.log('[GEO] cache hit:', key);
+      return geocodeCache.get(key);
+    }
+    // 1초 throttle (Nominatim 사용 정책)
+    const wait = Math.max(0, 1000 - (Date.now() - lastGeoCallAt));
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    lastGeoCallAt = Date.now();
+
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ko&q=' + encodeURIComponent(key);
+    console.log('[GEO] Nominatim →', url);
+    const res = await fetch(url, { headers: { 'Accept-Language': 'ko' } });
+    if (!res.ok) throw new Error('Nominatim HTTP ' + res.status);
+    const arr = await res.json();
+    if (!arr || arr.length === 0) {
+      geocodeCache.set(key, null);
+      console.warn('[GEO] no result for:', key);
+      return null;
+    }
+    const result = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
+    geocodeCache.set(key, result);
+    console.log('[GEO] ✓', key, '→', result);
+    return result;
+  }
+
+  /* ===========================================================
+     폴백 지도 (실패 시만 lazy-init)
+     =========================================================== */
+  function showFallback(centerHint) {
+    const sec = document.getElementById('fallback-section');
+    sec.style.display = 'block';
+
+    if (!fallbackMap) {
+      fallbackMap = L.map('map').setView(centerHint || [37.881, 127.730], 13);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(fallbackMap);
+      fallbackMap.on('click', (e) => {
+        selectedLat = +e.latlng.lat.toFixed(5);
+        selectedLng = +e.latlng.lng.toFixed(5);
+        document.getElementById('coord-text').textContent = `lat=${selectedLat}, lng=${selectedLng}`;
+        if (pickedMarker) fallbackMap.removeLayer(pickedMarker);
+        pickedMarker = L.marker([selectedLat, selectedLng]).addTo(fallbackMap);
+      });
+    }
+    setTimeout(() => fallbackMap.invalidateSize(), 100);
+    if (centerHint) fallbackMap.setView(centerHint, 13);
+  }
+  function hideFallback() {
+    document.getElementById('fallback-section').style.display = 'none';
   }
 
   function showQrError(msg) {
@@ -301,10 +392,12 @@
     return typeof window.qrcode === 'function';
   }
 
-  function generateQR() {
+  /* ===========================================================
+     QR 생성 — 주소를 지오코딩 → 좌표 자동 채움 → QR 렌더
+     =========================================================== */
+  async function generateQR() {
     console.log('[QR-GEN] generateQR() called');
 
-    // (1) 라이브러리 확인
     if (!libReady()) {
       if (window.__qrLibError) {
         showQrError('QR 라이브러리 CDN 로드 실패: ' + window.__qrLibError + '. 새로고침해주세요.');
@@ -314,25 +407,67 @@
       return;
     }
 
-    // (2) 입력 검증
     const id      = document.getElementById('f-id').value.trim();
     const name    = document.getElementById('f-name').value.trim();
     const address = document.getElementById('f-address').value.trim();
     const phone   = document.getElementById('f-phone').value.trim();
     const region  = document.getElementById('f-region').value.trim();
 
-    if (!id || !name) { alert('송장 ID와 수취인 이름은 필수입니다'); return; }
-    if (selectedLat === null || selectedLng === null) {
-      alert('지도에서 좌표를 먼저 선택해주세요');
+    if (!id || !name)   { alert('송장 ID와 수취인 이름은 필수입니다'); return; }
+    if (!address)       { alert('주소를 입력해주세요'); return; }
+
+    // 주소 → 좌표 (Nominatim, 캐시 우선)
+    setGeoStatus('🌐 주소를 좌표로 변환 중...', '');
+    let coords;
+    try {
+      coords = await geocode(address);
+    } catch (e) {
+      console.error('[GEO] 호출 실패:', e);
+      setGeoStatus('지오코딩 오류: ' + (e.message || e) + ' — 지도에서 보정해주세요', 'err');
+      showFallback();
       return;
     }
+    if (!coords) {
+      setGeoStatus('주소를 좌표로 변환하지 못했습니다. 지도에서 위치를 직접 찍어 보정하세요', 'err');
+      showFallback();
+      return;
+    }
+    setGeoStatus(`✓ 좌표 변환 성공 (${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`, 'ok');
+    hideFallback();
 
-    const payload = { id, name, address, phone, lat: selectedLat, lng: selectedLng };
-    if (region) payload.region = region;
-    const text = JSON.stringify(payload);
+    renderQR({ id, name, address, phone, region, lat: coords.lat, lng: coords.lng });
+  }
+
+  // 폴백 지도에서 사용자가 찍은 좌표로 QR 생성
+  function generateWithPickedCoords() {
+    if (selectedLat === null || selectedLng === null) {
+      alert('지도에서 위치를 먼저 클릭해주세요');
+      return;
+    }
+    const id      = document.getElementById('f-id').value.trim();
+    const name    = document.getElementById('f-name').value.trim();
+    const address = document.getElementById('f-address').value.trim();
+    const phone   = document.getElementById('f-phone').value.trim();
+    const region  = document.getElementById('f-region').value.trim();
+    if (!id || !name) { alert('송장 ID와 수취인 이름은 필수입니다'); return; }
+    setGeoStatus(`✓ 수동 좌표 (${selectedLat}, ${selectedLng}) 로 생성`, 'ok');
+    // 캐시에 저장 → 같은 주소 다음 호출 시 즉시 사용
+    if (address) geocodeCache.set(address, { lat: selectedLat, lng: selectedLng });
+    renderQR({ id, name, address, phone, region, lat: selectedLat, lng: selectedLng });
+  }
+
+  function renderQR(payload) {
+    const text = JSON.stringify({
+      id: payload.id,
+      name: payload.name,
+      address: payload.address,
+      phone: payload.phone,
+      lat: payload.lat,
+      lng: payload.lng,
+      ...(payload.region ? { region: payload.region } : {})
+    });
     console.log('[QR-GEN] payload (' + text.length + ' chars) =', text);
 
-    // (3) QR 생성 (qrcode-generator: typeNumber:0 = auto, errorCorrectionLevel:L = 최대 용량)
     const box = document.getElementById('qr-box');
     box.innerHTML = '';
 
@@ -347,7 +482,6 @@
       return;
     }
 
-    // 240px 표시 크기에 맞춰 cellSize 자동 계산
     const moduleCount = qr.getModuleCount();
     const margin = 2;
     const cellSize = Math.max(1, Math.floor((240 - margin * 2) / moduleCount));
@@ -359,15 +493,13 @@
     img.style.cssText = 'display:block; width:240px; height:auto; image-rendering:pixelated; border-radius:6px;';
     box.appendChild(img);
 
-    // (4) 생성 완료 메시지
     const okMsg = document.createElement('div');
-    okMsg.style.cssText =
-      'margin-top:12px; color:#00875a; font-size:12px; font-weight:700; text-align:center;';
+    okMsg.style.cssText = 'margin-top:12px; color:#00875a; font-size:12px; font-weight:700; text-align:center;';
     okMsg.textContent = '✓ QR 이 생성되었습니다';
     box.appendChild(okMsg);
   }
 
-  // 첫 진입 시 데모 1 자동 로드 — 라이브러리 로드 Promise 를 await
+  // 부트스트랩 — 라이브러리 준비 후 데모 1 자동 생성
   async function bootstrap() {
     loadPreset(0);
     const ok = await window.__qrLibReady;
