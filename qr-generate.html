@@ -17,10 +17,12 @@
   window.__qrLibReady   = new Promise(resolve => { window.__qrLibResolve = resolve; });
 
   (function loadQrLib() {
+    /* qrcode-generator (Kazuhiko Arase): typeNumber:0 으로 진짜 auto-detect 동작,
+       UTF-8 byte mode 지원. davidshimjs qrcodejs 의 auto 가 한글 overflow 내는 문제 회피. */
     const URLS = [
-      'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',
-      'https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js',
-      'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'
+      'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js',
+      'https://unpkg.com/qrcode-generator@1.4.4/qrcode.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'
     ];
     let i = 0;
     function tryNext() {
@@ -36,13 +38,22 @@
       s.src = url;
       s.async = false;
       s.onload = function () {
-        if (typeof window.QRCode === 'function') {
+        if (typeof window.qrcode === 'function') {
+          // 한글(UTF-8) byte mode 필수 — 기본은 Latin-1 이라서 한글 깨짐
+          try {
+            if (window.qrcode.stringToBytesFuncs && window.qrcode.stringToBytesFuncs['UTF-8']) {
+              window.qrcode.stringToBytes = window.qrcode.stringToBytesFuncs['UTF-8'];
+            } else if (typeof TextEncoder !== 'undefined') {
+              const enc = new TextEncoder();
+              window.qrcode.stringToBytes = function (s) { return Array.from(enc.encode(s)); };
+            }
+          } catch (_) {}
           window.__qrLibLoaded = true;
           window.__qrLibUrl    = url;
           console.log('[QR-GEN] ✓ 로드 성공:', url);
           window.__qrLibResolve(true);
         } else {
-          console.warn('[QR-GEN] 스크립트는 로드됐으나 window.QRCode 미정의:', url);
+          console.warn('[QR-GEN] 스크립트는 로드됐으나 window.qrcode 미정의:', url);
           tryNext();
         }
       };
@@ -291,7 +302,7 @@
   }
 
   function libReady() {
-    return typeof window.QRCode === 'function';
+    return typeof window.qrcode === 'function';
   }
 
   function generateQR() {
@@ -323,31 +334,34 @@
     const payload = { id, name, address, phone, lat: selectedLat, lng: selectedLng };
     if (region) payload.region = region;
     const text = JSON.stringify(payload);
-    console.log('[QR-GEN] payload =', text);
+    console.log('[QR-GEN] payload (' + text.length + ' chars) =', text);
 
-    // (3) QR 생성 (davidshimjs API)
+    // (3) QR 생성 (qrcode-generator: typeNumber:0 = auto, errorCorrectionLevel:L = 최대 용량)
     const box = document.getElementById('qr-box');
     box.innerHTML = '';
 
-    const qrDiv = document.createElement('div');
-    qrDiv.id = 'qr-canvas';
-    qrDiv.style.cssText = 'display:flex; align-items:center; justify-content:center;';
-    box.appendChild(qrDiv);
-
+    let qr;
     try {
-      new QRCode(qrDiv, {
-        text: text,
-        width: 240,
-        height: 240,
-        colorDark: '#0f1424',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
-      console.log('[QR-GEN] ✓ QR rendered');
+      qr = window.qrcode(0, 'L');
+      qr.addData(text);
+      qr.make();
+      console.log('[QR-GEN] ✓ QR built, moduleCount =', qr.getModuleCount());
     } catch (e) {
       showQrError('QR 생성 예외: ' + (e && e.message || e));
       return;
     }
+
+    // 240px 표시 크기에 맞춰 cellSize 자동 계산
+    const moduleCount = qr.getModuleCount();
+    const margin = 2;
+    const cellSize = Math.max(1, Math.floor((240 - margin * 2) / moduleCount));
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = qr.createImgTag(cellSize, margin);
+    const img = wrapper.querySelector('img');
+    img.alt = 'NOLABEL 송장 QR';
+    img.style.cssText = 'display:block; width:240px; height:auto; image-rendering:pixelated; border-radius:6px;';
+    box.appendChild(img);
 
     // (4) JSON 텍스트 함께 표시 (디버깅·복사용)
     const jsonBox = document.createElement('div');
