@@ -679,6 +679,19 @@
     object-fit: cover !important;
     background: #000;
     display: block;
+    transform-origin: center center;
+    transition: transform .2s ease;
+  }
+  /* 트랙 zoom capability 가 없을 때 폴백 (CSS 로 영상만 확대) */
+  #qr-reader video.zoom-fallback {
+    transform: scale(1.6);
+  }
+  /* html5-qrcode 가 qrbox 시각화로 추가하는 흰색 사각형/모서리 가이드 제거.
+     바깥 초록 코너 마커(.corner.*)는 유지. */
+  #qr-shaded-region,
+  #qr-reader #qr-shaded-region,
+  #qr-reader__scan_region #qr-shaded-region {
+    display: none !important;
   }
   /* 스캐너 에러/상태 메시지 (CDN 실패, 권한 거부 등) */
   .qr-error {
@@ -1662,6 +1675,7 @@
         console.log('[QR] start() try:', a.label);
         await qrScanner.start(a.source, config, onScanSuccess, () => {});
         console.log('[QR] ✓ start success:', a.label);
+        await applyInitialZoom();
         return;
       } catch (err) {
         console.warn('[QR] ✗ start failed (' + a.label + '):', err && (err.message || err.name || err));
@@ -1686,10 +1700,52 @@
       const backCam = cams.find(c => /back|rear|environment|후면/i.test(c.label)) || cams[cams.length - 1];
       await qrScanner.start(backCam.id, config, onScanSuccess, () => {});
       console.log('[QR] ✓ start success via id:', backCam.id, backCam.label);
+      await applyInitialZoom();
     } catch (err) {
       const reason = (err && (err.message || err.name)) || String(err);
       showScanError('카메라 시작 실패: ' + reason);
       qrScanner = null;
+    }
+  }
+
+  /* 스캐너 시작 직후 카메라 트랙 zoom 을 한 단계 당겨둔다 (QR 인식률 향상).
+     • 트랙이 zoom capability 를 지원하면 applyConstraints 로 적용
+     • 미지원이면 video 요소에 CSS scale 폴백 클래스 추가
+     qrbox 는 원본 프레임 기준이라 줌과 무관하게 동작. */
+  async function applyInitialZoom() {
+    try {
+      // 비디오가 attach 될 때까지 한 박자 대기
+      await new Promise(r => setTimeout(r, 200));
+      const videoEl = document.querySelector('#qr-reader video');
+      if (!videoEl || !videoEl.srcObject) {
+        console.log('[QR] zoom: video 아직 준비 안 됨, 폴백 CSS 적용');
+        if (videoEl) videoEl.classList.add('zoom-fallback');
+        return;
+      }
+      const tracks = videoEl.srcObject.getVideoTracks();
+      const track = tracks && tracks[0];
+      if (!track) {
+        videoEl.classList.add('zoom-fallback');
+        return;
+      }
+      const caps = (track.getCapabilities && track.getCapabilities()) || {};
+      if (caps.zoom && typeof caps.zoom.max === 'number') {
+        const minZ = caps.zoom.min || 1;
+        const maxZ = caps.zoom.max;
+        // 기본값(min)의 2배 — capability 범위의 30% 미만이면 30% 지점까지 보정
+        let target = Math.min(maxZ, minZ * 2);
+        const thirty = minZ + (maxZ - minZ) * 0.3;
+        if (target < thirty) target = thirty;
+        await track.applyConstraints({ advanced: [{ zoom: target }] });
+        console.log('[QR] ✓ zoom =', target.toFixed(2), 'of [' + minZ + ',' + maxZ + ']');
+      } else {
+        console.log('[QR] zoom capability 미지원 → CSS scale 폴백');
+        videoEl.classList.add('zoom-fallback');
+      }
+    } catch (e) {
+      console.warn('[QR] zoom 적용 실패, CSS 폴백:', e && (e.message || e));
+      const videoEl = document.querySelector('#qr-reader video');
+      if (videoEl) videoEl.classList.add('zoom-fallback');
     }
   }
 
