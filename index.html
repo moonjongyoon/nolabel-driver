@@ -1007,7 +1007,7 @@
   }
 
   /* ===========================================================
-     8. 모바일 풀스크린
+     8. 모바일 풀스크린 + iOS 안전영역 (노치/다이나믹 아일랜드)
      =========================================================== */
   @media (max-width: 480px) {
     .stage { padding: 0; gap: 0; min-height: 100dvh; }
@@ -1018,6 +1018,18 @@
       border-radius: 0;
       border: none;
       box-shadow: none;
+    }
+    /* 헤더 상단을 상태바 아래로 — env 미지원 환경 대비 최소 44px 보장 */
+    .app-header {
+      padding-top: max(44px, calc(18px + env(safe-area-inset-top, 0px)));
+    }
+    /* 로그인은 헤더가 없어서 .body 자체를 안전영역 아래로 */
+    #screen-login .body {
+      padding-top: max(44px, calc(28px + env(safe-area-inset-top, 0px)));
+    }
+    /* 하단도 홈인디케이터 영역 피하기 */
+    .footer {
+      padding-bottom: max(18px, calc(18px + env(safe-area-inset-bottom, 0px)));
     }
   }
 </style>
@@ -1278,9 +1290,19 @@
   let mainMarkers = {}, lookupMarker = null;
   let driverMarker = null, lookupDriverMarker = null;
   let routePolyline = null;
+  let lookupRoutePolyline = null;
+  let lastRouteLatLngs = null;     // 가장 최근 그려진 경로의 [[lat,lng], ...]
   let driverPos = null;            // { lat, lng }
   let watchId = null;
   let qrScanner = null;
+  /* 사용자가 지도를 직접 드래그/줌 한 뒤엔 자동 fit 으로 시야를 빼앗지 않는다.
+     programmaticOps>0 동안의 zoomstart 는 프로그램 호출이라 무시. */
+  let mapUserAdjusted = false;
+  let programmaticOps = 0;
+  function withProgrammatic(fn) {
+    programmaticOps++;
+    try { fn(); } finally { setTimeout(() => { programmaticOps--; }, 600); }
+  }
 
   /* ===========================================================
      B. 화면 전환
@@ -1327,6 +1349,13 @@
       attribution: '© OpenStreetMap'
     }).addTo(mainMap);
     L.control.zoom({ position: 'bottomright' }).addTo(mainMap);
+
+    // 사용자 직접 조작 감지 — 이후로는 자동 fit 하지 않는다
+    mainMap.on('dragstart', () => { mapUserAdjusted = true; });
+    mainMap.on('zoomstart', () => {
+      if (programmaticOps === 0) mapUserAdjusted = true;
+    });
+
     setTimeout(() => {
       mainMap.invalidateSize();
       renderMainMarkers();
@@ -1399,18 +1428,26 @@
     fitMainBounds();
   }
 
-  function fitMainBounds() {
+  /* 배송지 위주로 확대 고정 — driver 위치는 일부러 bounds 에 포함하지 않음
+     (멀리 있을 때 줌아웃되어 배송지가 깨알이 되는 문제 방지).
+     사용자가 직접 줌/드래그 한 후에는 자동 fit 을 멈춰서 시야를 빼앗지 않는다. */
+  function fitMainBounds(opts) {
+    opts = opts || {};
     if (!mainMap) return;
-    const pts = [];
-    DELIVERIES.forEach(d => {
-      if (typeof d.lat === 'number' && typeof d.lng === 'number') pts.push([d.lat, d.lng]);
-    });
-    if (driverPos) pts.push([driverPos.lat, driverPos.lng]);
-    if (pts.length >= 2) {
-      mainMap.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 15 });
-    } else if (pts.length === 1) {
-      mainMap.setView(pts[0], 14);
+    if (mapUserAdjusted && !opts.force) return;
+
+    const pts = DELIVERIES
+      .filter(d => typeof d.lat === 'number' && typeof d.lng === 'number')
+      .map(d => [d.lat, d.lng]);
+
+    if (pts.length === 0) return;
+    if (pts.length === 1) {
+      withProgrammatic(() => mainMap.setView(pts[0], 16));
+      return;
     }
+    withProgrammatic(() => {
+      mainMap.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 16 });
+    });
   }
 
   function updateDriverMarker() {
@@ -1824,8 +1861,9 @@
   }
 
   function onRefresh() {
+    mapUserAdjusted = false;          // 사용자 조정 리셋 → 다시 배송지 중심으로
     renderList();
-    if (mainMap) fitMainBounds();
+    if (mainMap) fitMainBounds({ force: true });
     toast('동기화 완료');
   }
 
@@ -1857,15 +1895,29 @@
     document.getElementById("lookup-address").textContent = item.address || '(주소 미등록)';
     document.getElementById("lookup-phone").textContent = item.phone || '—';
 
-    // 미니맵: 해당 배송지 중심
+    // 미니맵: 해당 배송지 중심 + 메인의 최적 경로(있다면) 동일 polyline
     setTimeout(() => {
       if (!lookupMap) return;
+      // 기존 핀/경로 정리
       if (lookupMarker) { lookupMap.removeLayer(lookupMarker); lookupMarker = null; }
+      if (lookupRoutePolyline) { lookupMap.removeLayer(lookupRoutePolyline); lookupRoutePolyline = null; }
+
+      // 최적 경로 polyline 재사용
+      if (lastRouteLatLngs && lastRouteLatLngs.length > 1) {
+        lookupRoutePolyline = L.polyline(lastRouteLatLngs, {
+          color: '#2b59ff', weight: 4, opacity: 0.8,
+          lineJoin: 'round', lineCap: 'round'
+        }).addTo(lookupMap);
+      }
+
       if (typeof item.lat === 'number' && typeof item.lng === 'number') {
         lookupMarker = L.marker([item.lat, item.lng], {
           icon: makePinIcon(item.order, item.status === '완료', true)
         }).addTo(lookupMap);
-        lookupMap.setView([item.lat, item.lng], 15);
+        // 경로가 있으면 약간 멀리(13) — 주변 경로 함께 보이도록.
+        // 없으면 가까이(15) — 배송지 중심
+        const zoom = (lastRouteLatLngs && lastRouteLatLngs.length > 1) ? 13 : 15;
+        lookupMap.setView([item.lat, item.lng], zoom);
       }
       lookupMap.invalidateSize();
     }, 150);
@@ -1956,7 +2008,7 @@
       .filter(d => typeof d.lat === 'number' && typeof d.lng === 'number')
       .sort((a, b) => a.order - b.order);
     const stops = [{ lat: start.lat, lng: start.lng }, ...sorted];
-    if (stops.length < 2) return null;
+    if (stops.length < 2) { lastRouteLatLngs = null; return null; }
 
     // OSRM: lng,lat 순서. overview=full + geometries=geojson 으로 모든 노드 좌표 받음
     try {
@@ -1969,6 +2021,7 @@
       if (!data.routes || !data.routes[0]) throw new Error('OSRM: no routes returned');
       const route = data.routes[0];
       const latlngs = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+      lastRouteLatLngs = latlngs;       // lookup 미니맵 에서도 재사용
       routePolyline = L.polyline(latlngs, {
         color: '#2b59ff', weight: 5, opacity: 0.85,
         lineJoin: 'round', lineCap: 'round'
@@ -1976,16 +2029,20 @@
       const km  = (route.distance || 0) / 1000;
       const min = Math.round((route.duration || 0) / 60);
       console.log('[ROUTE] ✓ OSRM drawn ·', km.toFixed(2), 'km ·', min, 'min ·', latlngs.length, 'nodes');
-      fitMainBounds();
+      // 새 경로 → 배송지 위주로 다시 fit (사용자 조정 무시)
+      mapUserAdjusted = false;
+      fitMainBounds({ force: true });
       return { km, min, source: 'osrm' };
     } catch (e) {
       console.warn('[ROUTE] OSRM 실패 → 직선 폴백:', e && (e.message || e));
       const pts = stops.map(s => [s.lat, s.lng]);
+      lastRouteLatLngs = pts;
       routePolyline = L.polyline(pts, {
         color: '#2b59ff', weight: 4, opacity: 0.75,
         dashArray: '6 6', lineJoin: 'round'
       }).addTo(mainMap);
-      fitMainBounds();
+      mapUserAdjusted = false;
+      fitMainBounds({ force: true });
       return null;
     }
   }
