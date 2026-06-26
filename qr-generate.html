@@ -9,14 +9,52 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-  window.__qrLibLoaded = false;
-  window.__qrLibError  = null;
+  /* QR 라이브러리 (davidshimjs qrcodejs) 를 여러 CDN 후보로 순차 시도.
+     하나가 onerror 또는 load 후 window.QRCode 정의 실패면 다음 후보로 폴백. */
+  window.__qrLibLoaded  = false;
+  window.__qrLibError   = null;
+  window.__qrLibUrl     = null;
+  window.__qrLibReady   = new Promise(resolve => { window.__qrLibResolve = resolve; });
+
+  (function loadQrLib() {
+    const URLS = [
+      'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',
+      'https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'
+    ];
+    let i = 0;
+    function tryNext() {
+      if (i >= URLS.length) {
+        window.__qrLibError = '모든 QR CDN 후보 로드 실패 (' + URLS.length + '개 시도)';
+        console.error('[QR-GEN] ✗', window.__qrLibError);
+        window.__qrLibResolve(false);
+        return;
+      }
+      const url = URLS[i++];
+      console.log('[QR-GEN] CDN 시도 (' + i + '/' + URLS.length + '):', url);
+      const s = document.createElement('script');
+      s.src = url;
+      s.async = false;
+      s.onload = function () {
+        if (typeof window.QRCode === 'function') {
+          window.__qrLibLoaded = true;
+          window.__qrLibUrl    = url;
+          console.log('[QR-GEN] ✓ 로드 성공:', url);
+          window.__qrLibResolve(true);
+        } else {
+          console.warn('[QR-GEN] 스크립트는 로드됐으나 window.QRCode 미정의:', url);
+          tryNext();
+        }
+      };
+      s.onerror = function (e) {
+        console.warn('[QR-GEN] ✗ CDN 실패:', url, e && e.type);
+        tryNext();
+      };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  })();
 </script>
-<script
-  src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"
-  onload="window.__qrLibLoaded = true; console.log('[QR-GEN] ✓ qrcode lib loaded');"
-  onerror="window.__qrLibError = 'CDN load failed'; console.error('[QR-GEN] ✗ qrcode lib failed to load');"
-></script>
 
 <style>
   :root {
@@ -246,19 +284,26 @@
   function showQrError(msg) {
     console.error('[QR-GEN]', msg);
     const box = document.getElementById('qr-box');
-    box.innerHTML = '<div style="color:#b42318; font-size:13px; font-weight:700; text-align:center; padding:18px; line-height:1.5;">⚠️ ' + msg + '</div>';
+    box.innerHTML =
+      '<div style="color:#b42318; font-size:13px; font-weight:700; text-align:center; padding:18px; line-height:1.5;">' +
+      '⚠️ ' + msg +
+      '</div>';
+  }
+
+  function libReady() {
+    return typeof window.QRCode === 'function';
   }
 
   function generateQR() {
     console.log('[QR-GEN] generateQR() called');
 
-    // (1) 라이브러리 로드 확인
-    if (window.__qrLibError) {
-      showQrError('QR 라이브러리 CDN 로드 실패. 네트워크/방화벽 확인 후 새로고침.');
-      return;
-    }
-    if (typeof QRCode === 'undefined' || typeof QRCode.toCanvas !== 'function') {
-      showQrError('QR 라이브러리가 아직 로드되지 않았습니다. 잠시 후 다시 시도하세요.');
+    // (1) 라이브러리 확인
+    if (!libReady()) {
+      if (window.__qrLibError) {
+        showQrError('QR 라이브러리 CDN 로드 실패: ' + window.__qrLibError + '. 새로고침해주세요.');
+      } else {
+        showQrError('QR 라이브러리 로드 대기 중입니다. 잠시 후 다시 시도하세요.');
+      }
       return;
     }
 
@@ -275,57 +320,54 @@
       return;
     }
 
-    const payload = { id, name, address, phone, region, lat: selectedLat, lng: selectedLng };
+    const payload = { id, name, address, phone, lat: selectedLat, lng: selectedLng };
+    if (region) payload.region = region;
     const text = JSON.stringify(payload);
     console.log('[QR-GEN] payload =', text);
 
-    // (3) QR 생성
+    // (3) QR 생성 (davidshimjs API)
     const box = document.getElementById('qr-box');
     box.innerHTML = '';
-    const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'display:block; width:240px; height:240px;';
-    box.appendChild(canvas);
+
+    const qrDiv = document.createElement('div');
+    qrDiv.id = 'qr-canvas';
+    qrDiv.style.cssText = 'display:flex; align-items:center; justify-content:center;';
+    box.appendChild(qrDiv);
 
     try {
-      QRCode.toCanvas(canvas, text, {
+      new QRCode(qrDiv, {
+        text: text,
         width: 240,
-        margin: 2,
-        errorCorrectionLevel: 'M',
-        color: { dark: '#0f1424', light: '#ffffff' }
-      }, function (err) {
-        if (err) {
-          showQrError('QR 생성 실패: ' + (err.message || err));
-          return;
-        }
-        console.log('[QR-GEN] ✓ canvas drawn');
-        const meta = document.createElement('small');
-        meta.textContent = text;
-        meta.style.cssText = 'margin-top:10px; word-break:break-all; color:#8693a8; font-size:11px;';
-        box.appendChild(meta);
+        height: 240,
+        colorDark: '#0f1424',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
       });
+      console.log('[QR-GEN] ✓ QR rendered');
     } catch (e) {
       showQrError('QR 생성 예외: ' + (e && e.message || e));
+      return;
     }
+
+    // (4) JSON 텍스트 함께 표시 (디버깅·복사용)
+    const jsonBox = document.createElement('div');
+    jsonBox.style.cssText =
+      'margin-top:12px; padding:10px 12px; background:#f3f5fb; border-radius:8px;' +
+      'font-family:"SF Mono",ui-monospace,monospace; font-size:11px; color:#1a2233;' +
+      'word-break:break-all; line-height:1.5; width:100%; text-align:left;' +
+      'user-select:all; cursor:text;';
+    jsonBox.textContent = text;
+    box.appendChild(jsonBox);
   }
 
-  // 첫 진입 시 데모 1 자동 로드 — 라이브러리가 늦게 로드될 수 있어 한 박자 대기
-  function bootstrap() {
+  // 첫 진입 시 데모 1 자동 로드 — 라이브러리 로드 Promise 를 await
+  async function bootstrap() {
     loadPreset(0);
-    if (typeof QRCode !== 'undefined' && typeof QRCode.toCanvas === 'function') {
+    const ok = await window.__qrLibReady;
+    if (ok) {
       generateQR();
-    } else if (window.__qrLibError) {
-      showQrError('QR 라이브러리 CDN 로드 실패. 네트워크 확인 후 새로고침.');
     } else {
-      // 200ms 간격으로 최대 5초까지 라이브러리 로드 대기
-      let tries = 0;
-      const tm = setInterval(() => {
-        tries++;
-        if (typeof QRCode !== 'undefined' && typeof QRCode.toCanvas === 'function') {
-          clearInterval(tm); generateQR();
-        } else if (tries > 25 || window.__qrLibError) {
-          clearInterval(tm); showQrError('QR 라이브러리 로드 타임아웃 (CDN 실패 가능)');
-        }
-      }, 200);
+      showQrError('QR 라이브러리 CDN 로드 실패: ' + (window.__qrLibError || 'unknown'));
     }
   }
   bootstrap();
