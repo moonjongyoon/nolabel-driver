@@ -1641,7 +1641,7 @@
         <div class="next-bar"><i style="width:${pct}%"></i></div>
       </div>
       <div class="next-actions">
-        <button class="np-btn np-call" onclick="toast('📞 익명 중계 전화로 연결합니다')">📞 통화</button>
+        <button class="np-btn np-call" onclick="dialDelivery('${next.id}')">📞 통화</button>
         <button class="np-btn np-go" onclick="openDelivery('${next.id}')">배송 정보 보기 ▸</button>
       </div>
       <div class="next-actions" style="margin-top:8px;">
@@ -1933,8 +1933,28 @@
 
   function cancelLookup() { go("screen-list"); }
 
+  /* 실제 전화 앱 열기 — 익명 중계 컨셉 유지하면서 tel: 링크로 휴대폰 다이얼러 호출 */
+  function dialDelivery(id) {
+    const item = DELIVERIES.find(d => d.id === id);
+    if (!item) return;
+    if (item.status === '완료') {
+      toast('🔒 정보가 폐기되어 통화할 수 없습니다');
+      return;
+    }
+    const digits = String(item.phone || '').replace(/\D/g, '');
+    if (!digits) {
+      toast('전화번호가 등록되지 않았습니다');
+      return;
+    }
+    toast('📞 익명 중계 전화로 연결합니다');
+    // 토스트 살짝 보이게 한 박자 뒤 전화 앱 열기 (iOS Safari 가 다이얼 확인창 띄움)
+    setTimeout(() => {
+      window.location.href = 'tel:' + digits;
+    }, 550);
+  }
+
   function callRecipient() {
-    toastInScreen("toast-lookup", "📞 익명 중계 전화로 연결합니다");
+    dialDelivery(CURRENT_LOOKUP_ID);
   }
 
   function notifyDeliveryDone() {
