@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>NOLABEL — 익명 배송 수취인 앱</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="supabase.js"></script>
 <style>
   /* ===========================================================
@@ -1420,6 +1422,72 @@
     line-height: 1.6;
   }
 
+  /* Leaflet 실제 지도 — 추적 화면용 */
+  #track-map { width: 100%; height: 100%; background: #f1eef7; }
+  .leaflet-container { background: #e8edf5; font-family: inherit; }
+  .leaflet-control-attribution { font-size: 9px; }
+
+  .lf-pin-wrap { background: transparent !important; border: none !important; }
+  .lf-pin {
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .lf-pin .head {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    border: 3px solid #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    box-shadow: 0 6px 14px rgba(103,89,245,0.45);
+  }
+  .lf-pin .tail {
+    width: 2px; height: 8px;
+    background: var(--primary);
+  }
+  .lf-pin.dest .head {
+    background: var(--accent);
+    box-shadow: 0 6px 14px rgba(28,180,126,0.4);
+  }
+  .lf-pin.dest .tail { background: var(--accent); }
+
+  .lf-driver-wrap { background: transparent !important; border: none !important; }
+  .lf-driver {
+    position: relative;
+    width: 38px; height: 46px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .lf-driver .lf-pulse {
+    position: absolute;
+    left: 50%; top: 19px;
+    transform: translate(-50%, -50%);
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(103,89,245,0.25);
+    animation: lf-pulse-grow 1.8s infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+  @keyframes lf-pulse-grow {
+    0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 0.7; }
+    100% { transform: translate(-50%, -50%) scale(1.7); opacity: 0; }
+  }
+  .lf-driver .head, .lf-driver .tail { position: relative; z-index: 2; }
+  .lf-driver .head {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    border: 3px solid #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    box-shadow: 0 6px 14px rgba(103,89,245,0.45);
+  }
+  .lf-driver .tail {
+    width: 2px; height: 8px;
+    background: var(--primary);
+  }
+
   /* 실시간 변경 강조 — Supabase subscribe payload 도착 시 해당 카드 잠깐 강조 */
   .delivery-card.flash {
     animation: card-flash 1.8s ease-out;
@@ -1521,7 +1589,7 @@
       <div class="body">
         <div class="hero-greet">
           <div class="greet-row">
-            <b>박지호님,<br/>오늘도 안심 배송 🚚</b>
+            <b>김민준님,<br/>오늘도 안심 배송 🚚</b>
             <span class="weather">☀️ 22°</span>
           </div>
           <small id="hero-summary">배송 중 · 수령 확인 필요</small>
@@ -1582,40 +1650,11 @@
 
       <div class="body">
         <div class="map-wrap">
+          <div id="track-map"></div>
           <div class="map-overlay"><span class="dot"></span> 실시간 위치 갱신 중</div>
           <div class="map-zoom">
-            <button title="확대" onclick="toast('지도를 확대했어요')">+</button>
-            <button title="축소" onclick="toast('지도를 축소했어요')">−</button>
-          </div>
-
-          <div class="road h1"></div>
-          <div class="road h2"></div>
-          <div class="road v1"></div>
-          <div class="road v2"></div>
-
-          <svg class="route-svg" viewBox="0 0 390 210" preserveAspectRatio="none">
-            <polyline
-              id="route-line"
-              points="40,167 96,167 247,167 247,70 280,70 280,55"
-              fill="none"
-              stroke="#6759f5"
-              stroke-width="3"
-              stroke-dasharray="6 5"
-              stroke-linecap="round" />
-          </svg>
-
-          <div class="stop-dot" style="left:40px; top:167px;"></div>
-          <div class="stop-dot" style="left:96px; top:167px;"></div>
-
-          <div class="driver-pulse" id="driver-pulse" style="left:180px; top:167px;"></div>
-          <div class="pin" id="driver-pin" style="left:180px; top:167px;">
-            <div class="head">🚚</div>
-            <div class="tail"></div>
-          </div>
-
-          <div class="pin dest" id="dest-pin" style="left:280px; top:55px;">
-            <div class="head">🏠</div>
-            <div class="tail"></div>
+            <button title="확대" onclick="trackMapZoomIn()">+</button>
+            <button title="축소" onclick="trackMapZoomOut()">−</button>
           </div>
         </div>
 
@@ -1885,6 +1924,8 @@
   /* ===========================================================
      A. 데이터 — Supabase 에서 실시간으로 채워짐
      =========================================================== */
+  // 데모: 이 수취인은 김민준, 본인 배송 한 건(ND-2026-0608-001)만 노출
+  const MY_DELIVERY_ID = 'ND-2026-0608-001';
   const DELIVERIES = [];
 
   /* Supabase row → 수취인 앱 상태로 매핑.
@@ -1948,10 +1989,11 @@
       const rows = await window.NL.fetchAll();
       DELIVERIES.length = 0;
       rows.forEach(r => {
+        if (!r || r.id !== MY_DELIVERY_ID) return;   // 본인 배송만
         const m = mapSupabaseRow(r);
         if (m) DELIVERIES.push(m);
       });
-      console.log('[receiver] ✓ Supabase 데이터 로드:', DELIVERIES.length, '건');
+      console.log('[receiver] ✓ Supabase 데이터 로드 (본인 배송 한정):', DELIVERIES.length, '건');
       renderList();
     } catch (e) {
       console.warn('[receiver] fetchAll 실패:', (e && e.message) || e);
@@ -1972,6 +2014,7 @@
     try {
       const row = payload.new || payload.old;
       if (!row || !row.id) return;
+      if (row.id !== MY_DELIVERY_ID) return;   // 본인 배송만 처리
       const mapped = mapSupabaseRow(row);
       if (!mapped) return;
 
@@ -2089,10 +2132,15 @@
     filtered.sort((a, b) => priority(a) - priority(b));
 
     if (filtered.length === 0) {
+      const noData = DELIVERIES.length === 0;
       container.innerHTML = `
         <div class="empty-state">
-          <div class="emoji">📭</div>
-          <p>해당 조건의 배송이 없어요</p>
+          <div class="emoji">${noData ? '📦' : '📭'}</div>
+          <p>${
+            noData
+              ? '아직 등록된 배송이 없습니다<br/><small style="font-size:11px;">기사님이 송장을 스캔하면 여기에 표시돼요</small>'
+              : '해당 조건의 배송이 없어요'
+          }</p>
         </div>
       `;
     } else {
@@ -2234,21 +2282,8 @@
       else if (idx === item.progress) el.classList.add("current");
     });
 
-    if (item.driverPos) {
-      const d = item.driverPos;
-      document.getElementById("driver-pin").style.left = d.x + "px";
-      document.getElementById("driver-pin").style.top  = d.y + "px";
-      document.getElementById("driver-pulse").style.left = d.x + "px";
-      document.getElementById("driver-pulse").style.top  = d.y + "px";
-    }
-    if (item.destPos) {
-      const p = item.destPos;
-      document.getElementById("dest-pin").style.left = p.x + "px";
-      document.getElementById("dest-pin").style.top  = p.y + "px";
-    }
-    if (item.routePoints) {
-      document.getElementById("route-line").setAttribute("points", item.routePoints);
-    }
+    // Leaflet 실제 지도 init/갱신 + 기사 위치 실시간 구독 시작
+    setupTrackMapFor(item);
 
     // 배송 건별 도착 알림 토글 상태 복원
     const notifyEl = document.getElementById("arrival-notify");
@@ -2259,6 +2294,125 @@
       c.classList.toggle("selected",
         !!item.deliveryRequest && c.dataset.req === item.deliveryRequest);
     });
+  }
+
+  /* ===========================================================
+     G-2. Leaflet 실시간 추적 지도
+     =========================================================== */
+  let trackMap = null;
+  let trackDestMarker = null;
+  let trackDriverMarker = null;
+  let trackDestPos = null;
+  let trackDriverPos = null;
+  let trackDriverSubscribed = false;
+
+  function ensureTrackMap() {
+    if (trackMap) { setTimeout(() => trackMap.invalidateSize(), 100); return; }
+    trackMap = L.map('track-map', { zoomControl: false }).setView([37.881, 127.730], 13);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(trackMap);
+    setTimeout(() => trackMap.invalidateSize(), 120);
+  }
+
+  function trackMapZoomIn()  { if (trackMap) trackMap.zoomIn();  }
+  function trackMapZoomOut() { if (trackMap) trackMap.zoomOut(); }
+
+  function makeDestIcon() {
+    return L.divIcon({
+      className: 'lf-pin-wrap',
+      html: '<div class="lf-pin dest"><div class="head">🏠</div><div class="tail"></div></div>',
+      iconSize: [40, 50], iconAnchor: [20, 50]
+    });
+  }
+  function makeDriverIcon() {
+    return L.divIcon({
+      className: 'lf-driver-wrap',
+      html: '<div class="lf-driver"><div class="lf-pulse"></div><div class="head">🚚</div><div class="tail"></div></div>',
+      iconSize: [40, 50], iconAnchor: [20, 50]
+    });
+  }
+
+  function setupTrackMapFor(item) {
+    setTimeout(async () => {
+      ensureTrackMap();
+
+      // (a) 배송지 마커
+      if (typeof item.lat === 'number' && typeof item.lng === 'number') {
+        trackDestPos = { lat: item.lat, lng: item.lng };
+        if (trackDestMarker) trackMap.removeLayer(trackDestMarker);
+        trackDestMarker = L.marker([item.lat, item.lng], { icon: makeDestIcon() }).addTo(trackMap);
+      }
+
+      // (b) 기사 위치 — 최신값 1회 조회 후 실시간 구독
+      const cur = await fetchLatestDriverPos();
+      if (cur) updateTrackDriver(cur);
+      subscribeTrackDriver();
+      fitTrackBounds();
+    }, 150);
+  }
+
+  async function fetchLatestDriverPos() {
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (!window.NL || !window.NL.client) return null;
+      const { data, error } = await window.NL.client
+        .from('driver_location')
+        .select('lat,lng')
+        .eq('id', 'driver')
+        .maybeSingle();
+      if (error) throw error;
+      if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+        return { lat: data.lat, lng: data.lng };
+      }
+      return null;
+    } catch (e) {
+      console.warn('[receiver] driver_location 초기 조회 실패:', (e && e.message) || e);
+      return null;
+    }
+  }
+
+  function subscribeTrackDriver() {
+    if (trackDriverSubscribed) return;
+    try {
+      if (!window.NL || !window.NL.subscribeDriverLocation) return;
+      window.NL.subscribeDriverLocation((coords) => {
+        updateTrackDriver(coords);
+      });
+      trackDriverSubscribed = true;
+      console.log('[receiver] ✓ 기사 위치 실시간 구독 시작');
+    } catch (e) {
+      console.warn('[receiver] subscribeDriverLocation 실패:', (e && e.message) || e);
+    }
+  }
+
+  function updateTrackDriver(coords) {
+    if (!trackMap || !coords) return;
+    trackDriverPos = { lat: coords.lat, lng: coords.lng };
+    if (trackDriverMarker) {
+      trackDriverMarker.setLatLng([coords.lat, coords.lng]);
+    } else {
+      trackDriverMarker = L.marker([coords.lat, coords.lng], {
+        icon: makeDriverIcon(),
+        interactive: false,
+        zIndexOffset: 500
+      }).addTo(trackMap);
+    }
+    fitTrackBounds();
+  }
+
+  let trackBoundsUserAdjusted = false;
+  function fitTrackBounds() {
+    if (!trackMap || trackBoundsUserAdjusted) return;
+    const pts = [];
+    if (trackDestPos)   pts.push([trackDestPos.lat, trackDestPos.lng]);
+    if (trackDriverPos) pts.push([trackDriverPos.lat, trackDriverPos.lng]);
+    if (pts.length === 0) return;
+    if (pts.length === 1) {
+      trackMap.setView(pts[0], 15);
+    } else {
+      trackMap.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 15 });
+    }
   }
 
   /* ===========================================================
