@@ -71,51 +71,78 @@
         },
 
         /* 개인정보 실제 폐기 — 행 자체를 DELETE.
-           양쪽 앱의 subscribe DELETE 이벤트가 폐기 상태로 반영하고,
-           수취인 completeReceipt 의 완료 화면은 클라이언트 상태로 보여줌. */
+           ⚠️ Supabase 는 RLS DELETE 정책이 없으면 silently 0 행이 삭제되고
+           error 도 안 나옴. count:'exact' 로 실제 영향 행수를 확인해
+           0 이면 실패로 간주하고 콘솔에 RLS 안내를 띄움.
+
+           필요 SQL (Supabase SQL editor 에서 한 번 실행):
+             alter table public.deliveries enable row level security;
+             create policy "anon_delete" on public.deliveries
+               for delete to anon using (true);
+             create policy "anon_select" on public.deliveries
+               for select to anon using (true);
+             create policy "anon_insert" on public.deliveries
+               for insert to anon with check (true);
+             create policy "anon_update" on public.deliveries
+               for update to anon using (true) with check (true);
+           driver_location 도 동일 4종 정책. */
         async clearInfo(id) {
           try {
             if (!id) throw new Error('clearInfo: id 필수');
-            const { error } = await client
+            const { error, count, status } = await client
               .from('deliveries')
-              .delete()
+              .delete({ count: 'exact' })
               .eq('id', id);
-            if (error) throw error;
-            console.log('[NL] ✓ clearInfo (DELETE) 완료:', id);
+            if (error) {
+              console.error('[NL] ✗ clearInfo DELETE 오류 (HTTP', status + '):', error);
+              throw error;
+            }
+            console.log('[NL] clearInfo DELETE 결과 — id:', id, '/ 영향 행:', count);
+            if (!count) {
+              console.warn('[NL] ⚠️ DELETE 적용 0 행 — id 가 없거나 RLS DELETE 정책 누락 가능');
+              console.warn('[NL] SQL: create policy "anon_delete" on public.deliveries for delete to anon using (true);');
+              return false;
+            }
+            console.log('[NL] ✓ clearInfo 완료');
             return true;
           } catch (e) {
-            console.warn('[NL] clearInfo 실패:', (e && e.message) || e);
+            console.error('[NL] ✗ clearInfo 실패:', (e && e.message) || e);
             return false;
           }
         },
 
-        /* 데모 리셋 — deliveries 전부 삭제 + driver_location 초기화 */
+        /* 데모 리셋 — deliveries 전부 + driver_location 삭제. count 로 검증. */
         async resetDemo() {
-          let okDeliveries = false;
-          let okDriverLoc = false;
+          const stats = { deliveriesDeleted: 0, driverLocDeleted: 0, errors: [] };
           try {
-            // 모든 행 삭제 — Supabase 는 .delete() 에 filter 필수
-            const { error } = await client
+            const { error, count } = await client
               .from('deliveries')
-              .delete()
+              .delete({ count: 'exact' })
               .not('id', 'is', null);
             if (error) throw error;
-            okDeliveries = true;
+            stats.deliveriesDeleted = count || 0;
+            console.log('[NL] resetDemo deliveries DELETE — 영향 행:', count);
           } catch (e) {
-            console.warn('[NL] resetDemo: deliveries 삭제 실패:', (e && e.message) || e);
+            const msg = (e && e.message) || String(e);
+            stats.errors.push('deliveries:' + msg);
+            console.error('[NL] ✗ resetDemo deliveries 실패:', msg);
+            console.warn('[NL] RLS DELETE 정책이 없을 수 있음 (anon 권한 확인)');
           }
           try {
-            const { error } = await client
+            const { error, count } = await client
               .from('driver_location')
-              .delete()
-              .eq('id', 'driver');
+              .delete({ count: 'exact' })
+              .not('id', 'is', null);
             if (error) throw error;
-            okDriverLoc = true;
+            stats.driverLocDeleted = count || 0;
+            console.log('[NL] resetDemo driver_location DELETE — 영향 행:', count);
           } catch (e) {
-            console.warn('[NL] resetDemo: driver_location 삭제 실패:', (e && e.message) || e);
+            const msg = (e && e.message) || String(e);
+            stats.errors.push('driver_location:' + msg);
+            console.warn('[NL] resetDemo driver_location 실패:', msg);
           }
-          console.log('[NL] ✓ resetDemo — deliveries:', okDeliveries, 'driver_location:', okDriverLoc);
-          return okDeliveries; // deliveries 만 핵심
+          console.log('[NL] resetDemo 최종:', stats);
+          return stats;
         },
 
         // 전체 조회 — updated_at 최신순

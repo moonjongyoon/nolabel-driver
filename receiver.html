@@ -2078,11 +2078,12 @@
     };
   }
 
-  /* Supabase 에서 전체 로드 + 실시간 구독 시작 */
-  async function bootstrapSupabase() {
+  /* DB 의 현재 상태로 로컬을 다시 채움 — 화면 진입/포커스마다 호출해
+     수취인 앱이 옛 상태를 들고 있지 않도록 보장. */
+  async function refreshFromSupabase() {
     try {
       if (!window.NL_READY) {
-        console.warn('[receiver] Supabase 모듈 미로드 — 빈 목록으로 표시');
+        console.warn('[receiver] Supabase 모듈 미로드 — 빈 목록');
         renderList();
         return;
       }
@@ -2093,25 +2094,42 @@
       if (myRow) {
         const m = mapSupabaseRow(myRow);
         if (m) DELIVERIES.push(m);
+        console.log('[receiver] DB 동기화 → status:', myRow.status);
       } else {
-        // 아직 기사가 QR 안 찍음 → '배송 준비중' placeholder 카드
+        // DB 에 행이 없음 → 항상 '배송 준비중' placeholder
         DELIVERIES.push(placeholderPreparing());
+        console.log('[receiver] DB 에 행 없음 → 배송 준비중');
       }
-      console.log('[receiver] ✓ Supabase 데이터 로드:', DELIVERIES[0] && DELIVERIES[0].status);
       renderList();
     } catch (e) {
       console.warn('[receiver] fetchAll 실패:', (e && e.message) || e);
-      renderList(); // 빈 목록 폴백
+      // 실패 시에도 placeholder 로 폴백
+      if (DELIVERIES.length === 0) {
+        DELIVERIES.push(placeholderPreparing());
+        renderList();
+      }
     }
+  }
 
+  let subscribed = false;
+  async function bootstrapSupabase() {
+    await refreshFromSupabase();
+    if (subscribed) return;
     try {
       await window.NL_READY;
       window.NL.subscribe(handleRealtimeChange);
+      subscribed = true;
       console.log('[receiver] ✓ 실시간 구독 시작');
     } catch (e) {
       console.warn('[receiver] subscribe 실패:', (e && e.message) || e);
     }
   }
+
+  // 페이지 포커스 복귀/visibilitychange 시 항상 DB 재조회
+  window.addEventListener('focus', () => refreshFromSupabase());
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshFromSupabase();
+  });
 
   /* postgres_changes payload 처리 — 카드 갱신/추가/삭제, 강조, 토스트 */
   function handleRealtimeChange(payload) {
@@ -2210,6 +2228,8 @@
     if (screenId === "screen-complete") launchConfetti();
     if (screenId === "screen-scan") startQrScanner();
     if (screenId !== "screen-scan") stopQrScanner();
+    // 목록 화면 진입 시 항상 DB 재조회 — 옛 상태가 화면에 남지 않게
+    if (screenId === "screen-list") refreshFromSupabase();
   }
 
   /* ===========================================================
@@ -2676,24 +2696,33 @@
      H. 수령 완료 처리
      =========================================================== */
   async function completeReceipt() {
-    const item = DELIVERIES.find(d => d.id === CURRENT_DELIVERY_ID);
-    if (item) {
-      item.infoCleared = true;
-    }
-    document.getElementById("complete-id").textContent =
-      CURRENT_DELIVERY_ID || "-";
-    renderList();
-    go("screen-complete");
-
-    // Supabase 에서 개인정보 실제 폐기 (name/address/phone = null, status='received')
+    // 먼저 Supabase 에서 행 DELETE 가 끝난 뒤에 완료 화면으로 이동.
+    // 실패 시(예: RLS DELETE 정책 누락) toast 로 사유 노출하고 중단.
+    toast('🔒 정보 폐기 중...');
+    let cleared = false;
     try {
       if (window.NL_READY) await window.NL_READY;
-      if (window.NL && window.NL.clearInfo && CURRENT_DELIVERY_ID) {
-        await window.NL.clearInfo(CURRENT_DELIVERY_ID);
+      if (!window.NL || !window.NL.clearInfo) throw new Error('Supabase 모듈 미로드');
+      cleared = await window.NL.clearInfo(CURRENT_DELIVERY_ID);
+      if (!cleared) {
+        toast('⚠️ 정보 폐기 실패 — Supabase RLS DELETE 정책을 확인하세요');
+        return;
       }
     } catch (e) {
-      console.warn('[receiver] clearInfo 스킵:', (e && e.message) || e);
+      toast('⚠️ 폐기 실패: ' + ((e && e.message) || e));
+      console.error('[receiver] clearInfo 예외:', e);
+      return;
     }
+
+    // 성공 → 로컬 상태 정리 (구독으로도 들어오지만 즉시 반영)
+    const idx = DELIVERIES.findIndex(d => d.id === CURRENT_DELIVERY_ID);
+    if (idx >= 0) DELIVERIES.splice(idx, 1);
+    if (!DELIVERIES.find(d => d.id === MY_DELIVERY_ID)) {
+      DELIVERIES.push(placeholderPreparing());
+    }
+    document.getElementById("complete-id").textContent = CURRENT_DELIVERY_ID || "-";
+    renderList();
+    go("screen-complete");
   }
 
   /* ===========================================================
