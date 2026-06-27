@@ -1307,6 +1307,9 @@
   const scannedIds = new Set();   // 중복 스캔 방지
   let CURRENT_LOOKUP_ID = null;
   let LAST_ROUTE_INFO = null;     // { km, min, optimized: bool }
+  // 한 번 계산한 최적 경로를 화면 전환·재진입 후에도 유지하기 위한 전역 상태
+  // { ordered:[id...], geometry:[[lat,lng],...], total_km, eta_min, source }
+  window.ROUTE_STATE = null;
 
   const DEFAULT_CENTER = [37.881, 127.730]; // 춘천 기본 중심
   const DEFAULT_ZOOM = 13;
@@ -1362,7 +1365,11 @@
      =========================================================== */
   function ensureMainMap() {
     if (mainMap) {
-      setTimeout(() => mainMap.invalidateSize(), 100);
+      setTimeout(() => {
+        mainMap.invalidateSize();
+        // 방어적 복원: polyline 이 어떤 이유로 사라졌으면 ROUTE_STATE 로 다시 그림
+        if (window.ROUTE_STATE && !routePolyline) restorePolylineOnMap();
+      }, 100);
       return;
     }
     mainMap = L.map('map', {
@@ -1384,6 +1391,7 @@
     setTimeout(() => {
       mainMap.invalidateSize();
       renderMainMarkers();
+      restorePolylineOnMap();              // 최초 init 직후에도 복원
       if (driverPos) updateDriverMarker();
     }, 120);
   }
@@ -1451,6 +1459,8 @@
     });
 
     fitMainBounds();
+    // 마커 재렌더 후에도 ROUTE_STATE 가 있으면 polyline 유지
+    if (window.ROUTE_STATE && !routePolyline) restorePolylineOnMap();
   }
 
   /* 배송지 위주로 확대 고정 — driver 위치는 일부러 bounds 에 포함하지 않음
@@ -1868,6 +1878,18 @@
     };
     DELIVERIES.push(d);
 
+    // 새 배송 추가 → 기존 ROUTE_STATE 는 stale, 폐기하고 polyline 도 제거
+    if (window.ROUTE_STATE) {
+      window.ROUTE_STATE = null;
+      LAST_ROUTE_INFO = null;
+      lastRouteLatLngs = null;
+      if (mainMap && routePolyline) {
+        try { mainMap.removeLayer(routePolyline); } catch (_) {}
+        routePolyline = null;
+      }
+      console.log('[ROUTE] 새 스캔 → ROUTE_STATE 무효화');
+    }
+
     if (navigator.vibrate) navigator.vibrate(80);
     toast(`✓ ${d.name} 등록 (${DELIVERIES.length}건)`);
     updateScanProgress();
@@ -1941,6 +1963,7 @@
     scannedIds.clear();
     LAST_ROUTE_INFO = null;
     lastRouteLatLngs = null;
+    window.ROUTE_STATE = null;        // 보관 경로도 폐기
     mapUserAdjusted = false;
 
     if (mainMap) {
@@ -2134,6 +2157,16 @@
         roadSource: routeInfo ? routeInfo.source : 'haversine'
       };
 
+      // 화면 전환 / 재진입 후에도 복원할 수 있게 전역 상태에 저장
+      window.ROUTE_STATE = {
+        ordered: order.slice(),
+        geometry: (lastRouteLatLngs || []).slice(),
+        total_km: km,
+        eta_min: min,
+        source: data.source || 'unknown'
+      };
+      console.log('[ROUTE] ROUTE_STATE 저장 — ordered:', order.length, '점 / geometry:', (lastRouteLatLngs||[]).length, '점');
+
       renderList();   // 카드 순서·번호 즉시 반영
 
       // 사용자에겐 항상 '거리순 최적화' 결과로 보이게
@@ -2145,6 +2178,48 @@
       console.error('optimizeRoute failed:', e);
       toast('경로 최적화 실패: ' + (e.message || e));
     }
+  }
+
+  /* ROUTE_STATE 의 ordered 순서를 DELIVERIES.order 에 반영하고
+     LAST_ROUTE_INFO / lastRouteLatLngs 도 동기화. 지도/카드 렌더 전에 호출. */
+  function reassignOrderFromRouteState() {
+    if (!window.ROUTE_STATE) return;
+    const ordered = window.ROUTE_STATE.ordered || [];
+    const allExist = ordered.every(id => DELIVERIES.find(d => d.id === id));
+    if (!allExist) {
+      console.log('[ROUTE] ROUTE_STATE id 가 현재 DELIVERIES 와 매칭 안 됨 — 초기화');
+      window.ROUTE_STATE = null;
+      LAST_ROUTE_INFO = null;
+      lastRouteLatLngs = null;
+      return;
+    }
+    let idx = 1;
+    ordered.forEach(id => {
+      const d = DELIVERIES.find(x => x.id === id);
+      if (d) d.order = idx++;
+    });
+    DELIVERIES.filter(d => !ordered.includes(d.id)).forEach(d => { d.order = idx++; });
+    LAST_ROUTE_INFO = {
+      km: window.ROUTE_STATE.total_km,
+      min: window.ROUTE_STATE.eta_min,
+      source: window.ROUTE_STATE.source,
+      roadSource: 'osrm'
+    };
+    lastRouteLatLngs = window.ROUTE_STATE.geometry;
+  }
+
+  /* 지도에 ROUTE_STATE.geometry 로 polyline 을 (재)그린다. 이미 그려져 있어도 안전. */
+  function restorePolylineOnMap() {
+    if (!mainMap || !window.ROUTE_STATE || !window.ROUTE_STATE.geometry) return;
+    if (routePolyline) {
+      try { mainMap.removeLayer(routePolyline); } catch (_) {}
+      routePolyline = null;
+    }
+    routePolyline = L.polyline(window.ROUTE_STATE.geometry, {
+      color: '#2b59ff', weight: 5, opacity: 0.85,
+      lineJoin: 'round', lineCap: 'round'
+    }).addTo(mainMap);
+    console.log('[ROUTE] ✓ polyline 복원 from ROUTE_STATE (', window.ROUTE_STATE.geometry.length, '점 )');
   }
 
   /* 실제 도로를 따라가는 경로선을 OSRM 공개 서버로 받아 그린다.
@@ -2364,7 +2439,9 @@
         scannedIds.add(r.id);
       });
       console.log('[Supabase] 기사 앱 DB 동기화:', DELIVERIES.length, '건');
-      renderList();
+      reassignOrderFromRouteState();   // 보관된 경로가 있으면 order 복원
+      renderList();                    // 카드/마커 정확한 순서로 렌더
+      restorePolylineOnMap();          // 지도 polyline 도 복원
     } catch (e) {
       console.warn('[Supabase] bootstrapDriverFromDB 실패:', (e && e.message) || e);
     }
