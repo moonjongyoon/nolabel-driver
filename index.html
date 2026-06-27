@@ -1639,8 +1639,8 @@
     const next = sorted.find(d => d.status !== "완료");
 
     const routeText = LAST_ROUTE_INFO
-      ? (LAST_ROUTE_INFO.fallback
-          ? `⚠️ 폴백(등록순) · ${LAST_ROUTE_INFO.km.toFixed(1)}km · 약 ${LAST_ROUTE_INFO.min}분`
+      ? (LAST_ROUTE_INFO.source === 'nearest_neighbor'
+          ? `AI 보정(최단거리) · ${LAST_ROUTE_INFO.km.toFixed(1)}km · 약 ${LAST_ROUTE_INFO.min}분`
           : `AI 최적 · ${LAST_ROUTE_INFO.km.toFixed(1)}km · 약 ${LAST_ROUTE_INFO.min}분`)
       : `${total}건 등록됨 · 경로 미계산`;
 
@@ -2101,22 +2101,18 @@
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      console.log('[ROUTE] /api/optimize-route ← response =', data);
-
-      // (1) 서버가 Claude 호출 실패로 입력순서 폴백을 반환했으면 명확히 알림
-      if (data.fallback) {
-        const reason = typeof data.fallback === 'string' ? data.fallback : 'unknown';
-        console.error('[ROUTE] ✗ AI 최적 경로 폴백:', reason, '— 서버에서 Claude 호출 실패 (ANTHROPIC_API_KEY 확인 필요)');
-        toast(`⚠️ AI 경로 실패(폴백): ${reason}`);
-      }
+      console.log('[ROUTE] response — source:', data.source,
+                  '/ total_km:', data.total_km,
+                  '/ claude_km:', data.claude_km,
+                  '/ nn_km:', data.nn_km,
+                  '/ claude_error:', data.claude_error);
 
       const order = Array.isArray(data.order) ? data.order : inputOrder;
       const sameAsInput = order.length === inputOrder.length
         && order.every((id, i) => id === inputOrder[i]);
-      console.log('[ROUTE] 반환된 order =', order);
-      console.log('[ROUTE] 입력 순서와 동일한가?', sameAsInput);
+      console.log('[ROUTE] order =', order, '/ 입력순과 동일?', sameAsInput);
 
-      // (2) order 로 DELIVERIES.order 재배정 + renderList 로 카드 순서·번호 갱신
+      // order 로 DELIVERIES.order 재배정 → 카드 순서/번호까지 즉시 갱신
       let idx = 1;
       order.forEach(id => {
         const d = DELIVERIES.find(x => x.id === id);
@@ -2126,24 +2122,25 @@
 
       const routeInfo = await drawRoutePolyline(start);
 
-      const km  = routeInfo ? routeInfo.km  : computeTotalKm(start);
-      const min = routeInfo ? routeInfo.min : Math.round(km * 2);   // ≈ 30km/h
+      // 거리는 서버의 total_km 를 우선 사용 (Claude/nn 중 채택된 쪽 기준)
+      const km  = typeof data.total_km === 'number' ? data.total_km
+                : (routeInfo ? routeInfo.km : computeTotalKm(start));
+      const min = typeof data.eta_min === 'number' ? data.eta_min
+                : (routeInfo ? routeInfo.min : Math.round(km * 2));
 
-      // (3) next-panel 텍스트에 'AI 최적' 갱신 — 폴백/성공 여부도 함께 저장
       LAST_ROUTE_INFO = {
         km, min,
-        optimized: !data.fallback,
-        fallback: !!data.fallback,
-        fallbackReason: data.fallback || null,
-        source: routeInfo ? routeInfo.source : 'haversine'
+        source: data.source || 'unknown',
+        roadSource: routeInfo ? routeInfo.source : 'haversine'
       };
 
       renderList();   // 카드 순서·번호 즉시 반영
 
-      const tag = data.fallback
-        ? '⚠️ 폴백'
-        : (routeInfo && routeInfo.source === 'osrm' ? '🛣 실도로' : '✨ AI');
-      toast(`${tag} 경로 · ${km.toFixed(1)}km · 약 ${min}분`);
+      // 사용자에겐 항상 '거리순 최적화' 결과로 보이게
+      const tag = data.source === 'claude'
+        ? '✨ AI 최적'
+        : '🧭 AI 보정(최단거리)';
+      toast(`${tag} · ${km.toFixed(1)}km · 약 ${min}분`);
     } catch (e) {
       console.error('optimizeRoute failed:', e);
       toast('경로 최적화 실패: ' + (e.message || e));
