@@ -8,6 +8,7 @@
 <title>NOLABEL — 익명 배송 수취인 앱</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
 <script src="supabase.js"></script>
 <style>
   /* ===========================================================
@@ -1031,13 +1032,76 @@
   .scan-frame {
     position: relative;
     width: 240px; height: 240px;
+    min-height: 240px;
+    flex-shrink: 0;
     margin-top: 24px;
+    overflow: hidden;             /* 영상이 프레임 밖으로 새지 않게 */
+    border-radius: 22px;
   }
   .scan-frame::before {
     content: "";
     position: absolute; inset: 0;
     border-radius: 22px;
     box-shadow: 0 0 0 9999px rgba(0,0,0,0.6);
+    z-index: 3;
+    pointer-events: none;
+  }
+  /* 스캐너 컨테이너 — .scan-frame 안에 정확히 fit (기사 앱과 동일 방식) */
+  #qr-reader {
+    position: absolute !important;
+    top: 0 !important; left: 0 !important;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 22px;
+    overflow: hidden;
+    background: #000;
+    z-index: 1;
+  }
+  #qr-reader > div,
+  #qr-reader__scan_region {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    position: relative !important;
+    display: block !important;
+  }
+  #qr-reader__dashboard,
+  #qr-reader__header_message,
+  #qr-reader__scan_region img { display: none !important; }
+  #qr-reader video {
+    position: absolute !important;
+    top: 0 !important; left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    background: #000;
+    display: block !important;
+    transform: none !important;
+  }
+  #qr-shaded-region,
+  #qr-reader #qr-shaded-region,
+  #qr-reader__scan_region #qr-shaded-region { display: none !important; }
+  .qr-error {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 18px;
+    border-radius: 22px;
+    background: rgba(10, 8, 20, 0.92);
+    color: #ff8a8a;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.5;
+    pointer-events: none;
   }
   .corner {
     position: absolute;
@@ -1812,6 +1876,9 @@
         </div>
 
         <div class="scan-frame">
+          <!-- 실제 카메라는 .scan-frame 안에만 렌더 -->
+          <div id="qr-reader"></div>
+          <div id="qr-error" class="qr-error" style="display:none;"></div>
           <span class="corner tl"></span>
           <span class="corner tr"></span>
           <span class="corner bl"></span>
@@ -1831,7 +1898,6 @@
 
       <div class="footer">
         <button class="btn btn-ghost" style="background:rgba(255,255,255,0.1); color:#fff;" onclick="go('screen-arrived')">취소</button>
-        <button class="btn btn-success" onclick="go('screen-verify')">스캔 완료 (시연용)</button>
       </div>
     </section>
 
@@ -2125,6 +2191,109 @@
     }
     if (screenId === "screen-verify") startResendTimer();
     if (screenId === "screen-complete") launchConfetti();
+    if (screenId === "screen-scan") startQrScanner();
+    if (screenId !== "screen-scan") stopQrScanner();
+  }
+
+  /* ===========================================================
+     B-2. 실제 카메라 QR 스캐너 (html5-qrcode)
+     =========================================================== */
+  let qrScanner = null;
+
+  function showScanError(msg) {
+    const el = document.getElementById('qr-error');
+    if (el) { el.textContent = '⚠️ ' + msg; el.style.display = 'flex'; }
+    console.error('[scan]', msg);
+    toast(msg);
+  }
+  function hideScanError() {
+    const el = document.getElementById('qr-error');
+    if (el) { el.style.display = 'none'; el.textContent = ''; }
+  }
+
+  async function startQrScanner() {
+    if (qrScanner) return;
+    hideScanError();
+    if (typeof Html5Qrcode === 'undefined') {
+      showScanError('스캐너 라이브러리 로드 실패');
+      return;
+    }
+    const el = document.getElementById('qr-reader');
+    if (!el) { showScanError('스캐너 컨테이너 없음'); return; }
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      showScanError('컨테이너 크기 0 (' + rect.width + 'x' + rect.height + ')');
+      return;
+    }
+
+    try { qrScanner = new Html5Qrcode('qr-reader', { verbose: false }); }
+    catch (e) { showScanError('초기화 실패: ' + (e.message || e)); qrScanner = null; return; }
+
+    const qrboxSize = Math.max(140, Math.floor(Math.min(rect.width, rect.height) * 0.9));
+    const config = { fps: 10, qrbox: { width: qrboxSize, height: qrboxSize }, aspectRatio: 1.0 };
+    const attempts = [
+      { label: 'environment', source: { facingMode: 'environment' } },
+      { label: 'user',        source: { facingMode: 'user' } }
+    ];
+
+    for (const a of attempts) {
+      try {
+        console.log('[scan] start try:', a.label);
+        await qrScanner.start(a.source, config, onScanSuccess, () => {});
+        console.log('[scan] ✓ start success:', a.label);
+        return;
+      } catch (err) {
+        console.warn('[scan] start failed (' + a.label + '):', err && (err.message || err.name || err));
+        try { await qrScanner.stop(); } catch (_) {}
+        try { qrScanner.clear(); } catch (_) {}
+        qrScanner = new Html5Qrcode('qr-reader', { verbose: false });
+      }
+    }
+    try {
+      const cams = await Html5Qrcode.getCameras();
+      if (!cams || cams.length === 0) { showScanError('사용 가능한 카메라가 없습니다'); qrScanner = null; return; }
+      const backCam = cams.find(c => /back|rear|environment|후면/i.test(c.label)) || cams[cams.length - 1];
+      await qrScanner.start(backCam.id, config, onScanSuccess, () => {});
+      console.log('[scan] ✓ start success via id:', backCam.label);
+    } catch (err) {
+      showScanError('카메라 시작 실패: ' + (err && (err.message || err.name) || err));
+      qrScanner = null;
+    }
+  }
+
+  function stopQrScanner() {
+    if (!qrScanner) return;
+    const s = qrScanner;
+    qrScanner = null;
+    s.stop().then(() => { try { s.clear(); } catch (_) {} }).catch(() => {});
+    hideScanError();
+  }
+
+  /* 스캔 성공 — JSON.id 가 본인 배송 id 와 일치하면 인증 화면으로,
+     아니면 toast 로 거부. 중복 트리거 방지 위해 한 번 성공 후 stop. */
+  let scanLocked = false;
+  function onScanSuccess(decodedText) {
+    if (scanLocked) return;
+    let data;
+    try { data = JSON.parse(decodedText); }
+    catch (e) { data = { id: decodedText }; }   // plain text 폴백
+    const scannedId = data && data.id;
+    if (!scannedId) { toast('유효하지 않은 QR'); return; }
+    if (scannedId !== MY_DELIVERY_ID) {
+      toast('본인 배송 QR이 아닙니다');
+      console.warn('[scan] id mismatch — scanned:', scannedId, 'expected:', MY_DELIVERY_ID);
+      return;
+    }
+    scanLocked = true;
+    if (navigator.vibrate) navigator.vibrate(80);
+    CURRENT_DELIVERY_ID = MY_DELIVERY_ID;
+    stopQrScanner();
+    toast('✓ 본인 확인 완료 — 인증 화면으로 이동');
+    setTimeout(() => {
+      scanLocked = false;
+      go('screen-verify');
+    }, 350);
   }
 
   /* ===========================================================
@@ -2499,14 +2668,14 @@
     renderList();
     go("screen-complete");
 
-    // Supabase 동기화 — 기사 앱 / 다른 디바이스로 폐기 상태 전파
+    // Supabase 에서 개인정보 실제 폐기 (name/address/phone = null, status='received')
     try {
       if (window.NL_READY) await window.NL_READY;
-      if (window.NL && window.NL.updateStatus && CURRENT_DELIVERY_ID) {
-        await window.NL.updateStatus(CURRENT_DELIVERY_ID, 'received');
+      if (window.NL && window.NL.clearInfo && CURRENT_DELIVERY_ID) {
+        await window.NL.clearInfo(CURRENT_DELIVERY_ID);
       }
     } catch (e) {
-      console.warn('[receiver] updateStatus(received) 스킵:', (e && e.message) || e);
+      console.warn('[receiver] clearInfo 스킵:', (e && e.message) || e);
     }
   }
 

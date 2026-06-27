@@ -70,6 +70,29 @@
           }
         },
 
+        /* 개인정보 실제 폐기 — name/address/phone 을 null 로 UPDATE + status='received' */
+        async clearInfo(id) {
+          try {
+            if (!id) throw new Error('clearInfo: id 필수');
+            const { error } = await client
+              .from('deliveries')
+              .update({
+                name: null,
+                address: null,
+                phone: null,
+                status: 'received',
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', id);
+            if (error) throw error;
+            console.log('[NL] ✓ clearInfo 완료:', id);
+            return true;
+          } catch (e) {
+            console.warn('[NL] clearInfo 실패:', (e && e.message) || e);
+            return false;
+          }
+        },
+
         // 전체 조회 — updated_at 최신순
         async fetchAll() {
           try {

@@ -2200,9 +2200,45 @@
   }
 
   /* ===========================================================
-     L. 초기화
+     L. 초기화 + Supabase 실시간 구독 (수취인의 폐기 반영)
      =========================================================== */
   renderList();
+
+  let driverDeliveriesSubscribed = false;
+  async function setupDriverDeliveriesSubscribe() {
+    if (driverDeliveriesSubscribed) return;
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (!window.NL || !window.NL.subscribe) return;
+      window.NL.subscribe(payload => {
+        try {
+          const row = payload.new || payload.old;
+          if (!row || !row.id) return;
+          const local = DELIVERIES.find(d => d.id === row.id);
+          if (!local) return;
+
+          // 수취인이 clearInfo 호출 → received 상태 + 개인정보 null 로 들어옴
+          const personalEmpty = !row.name && !row.address && !row.phone;
+          if ((row.status === 'received' || personalEmpty) && local.status !== '완료') {
+            local.status = '완료';
+            local.name = '';
+            local.address = '';
+            local.phone = '';
+            console.log('[Supabase] 수취인 정보 폐기 반영:', row.id);
+            toast(`🔒 ${row.region || row.id} 정보가 폐기되었습니다`);
+            renderList();
+          }
+        } catch (e) {
+          console.warn('[Supabase] subscribe handler 오류:', e);
+        }
+      });
+      driverDeliveriesSubscribed = true;
+      console.log('[Supabase] ✓ deliveries 실시간 구독 시작');
+    } catch (e) {
+      console.warn('[Supabase] deliveries 구독 실패:', (e && e.message) || e);
+    }
+  }
+  setupDriverDeliveriesSubscribe();
 </script>
 
 </body>
