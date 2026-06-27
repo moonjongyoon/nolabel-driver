@@ -70,6 +70,38 @@
           }
         },
 
+        /* 인증 직후 호출 — 행은 남기고 개인정보만 null + status='received'.
+           폐기완료 화면을 보는 동안 DB 가 이 상태로 유지되어 양쪽 앱이 일치.
+           새로고침 시 부트스트랩이 received 행을 DELETE 로 깨끗하게 초기화함. */
+        async markReceived(id) {
+          try {
+            if (!id) throw new Error('markReceived: id 필수');
+            const { error, count, status } = await client
+              .from('deliveries')
+              .update({
+                name: null, address: null, phone: null,
+                status: 'received',
+                updated_at: new Date().toISOString()
+              }, { count: 'exact' })
+              .eq('id', id);
+            if (error) {
+              console.error('[NL] ✗ markReceived UPDATE 오류 (HTTP', status + '):', error);
+              throw error;
+            }
+            console.log('[NL] markReceived UPDATE — id:', id, '/ 영향 행:', count);
+            if (!count) {
+              console.warn('[NL] ⚠️ UPDATE 0 행 — id 없음 또는 RLS UPDATE 정책 누락');
+              console.warn('[NL] SQL: create policy "anon_update" on public.deliveries for update to anon using (true) with check (true);');
+              return false;
+            }
+            console.log('[NL] ✓ markReceived 완료');
+            return true;
+          } catch (e) {
+            console.error('[NL] ✗ markReceived 실패:', (e && e.message) || e);
+            return false;
+          }
+        },
+
         /* 개인정보 실제 폐기 — 행 자체를 DELETE.
            ⚠️ Supabase 는 RLS DELETE 정책이 없으면 silently 0 행이 삭제되고
            error 도 안 나옴. count:'exact' 로 실제 영향 행수를 확인해

@@ -2297,10 +2297,38 @@
     if (s === 'received')   return '완료';
     return '배송중';
   }
+  let driverFirstBoot = true;
   async function bootstrapDriverFromDB() {
     try {
       if (window.NL_READY) await window.NL_READY;
       if (!window.NL || !window.NL.fetchAll) return;
+
+      // 첫 부트 시 received 행 DELETE 로 cleanup
+      if (driverFirstBoot && window.NL.client) {
+        driverFirstBoot = false;
+        try {
+          const pre = await window.NL.fetchAll();
+          const received = pre.filter(r => r && r.status === 'received');
+          if (received.length > 0) {
+            console.log('[Supabase] driver 첫 부트: received 행', received.length, '개 DELETE');
+            for (const r of received) {
+              try {
+                const { error, count } = await window.NL.client
+                  .from('deliveries')
+                  .delete({ count: 'exact' })
+                  .eq('id', r.id);
+                if (error) throw error;
+                console.log('[Supabase] received DELETE — id:', r.id, '/ 영향:', count);
+              } catch (e) {
+                console.warn('[Supabase] received DELETE 실패:', (e && e.message) || e);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[Supabase] driver 첫 부트 cleanup 실패:', e);
+        }
+      }
+
       const rows = await window.NL.fetchAll();
       rows.sort((a, b) => new Date(a.updated_at || 0) - new Date(b.updated_at || 0));
 

@@ -2113,6 +2113,34 @@
 
   let subscribed = false;
   async function bootstrapSupabase() {
+    // 첫 부트(페이지 로드) 시 — DB 에 status='received' 행이 남아 있으면
+    // 그때 실제로 DELETE 해서 깨끗하게 시작 (반복 시연 가능)
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (window.NL && window.NL.client) {
+        const rows = await window.NL.fetchAll();
+        const received = rows.filter(r => r && r.id === MY_DELIVERY_ID && r.status === 'received');
+        if (received.length > 0) {
+          console.log('[receiver] 첫 부트: received 행', received.length, '개 발견 → DELETE');
+          for (const r of received) {
+            try {
+              const { error, count } = await window.NL.client
+                .from('deliveries')
+                .delete({ count: 'exact' })
+                .eq('id', r.id);
+              if (error) throw error;
+              console.log('[receiver] received 행 DELETE 완료 — id:', r.id, '/ 영향 행:', count);
+              if (!count) console.warn('[receiver] DELETE 0 행 — RLS DELETE 정책 확인');
+            } catch (e) {
+              console.warn('[receiver] received 행 DELETE 실패:', (e && e.message) || e);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[receiver] 부트 cleanup 실패:', (e && e.message) || e);
+    }
+
     await refreshFromSupabase();
     if (subscribed) return;
     try {
@@ -2696,29 +2724,33 @@
      H. 수령 완료 처리
      =========================================================== */
   async function completeReceipt() {
-    // 먼저 Supabase 에서 행 DELETE 가 끝난 뒤에 완료 화면으로 이동.
-    // 실패 시(예: RLS DELETE 정책 누락) toast 로 사유 노출하고 중단.
+    // markReceived: 행을 남기고 개인정보만 null + status='received' UPDATE.
+    // 그래야 폐기완료 화면을 보는 동안 양쪽 앱이 일관되게 '폐기됨' 표시.
+    // (실제 DELETE 는 새로고침 시 bootstrap 에서 수행)
     toast('🔒 정보 폐기 중...');
-    let cleared = false;
+    let ok = false;
     try {
       if (window.NL_READY) await window.NL_READY;
-      if (!window.NL || !window.NL.clearInfo) throw new Error('Supabase 모듈 미로드');
-      cleared = await window.NL.clearInfo(CURRENT_DELIVERY_ID);
-      if (!cleared) {
-        toast('⚠️ 정보 폐기 실패 — Supabase RLS DELETE 정책을 확인하세요');
+      if (!window.NL || !window.NL.markReceived) throw new Error('Supabase 모듈 미로드');
+      ok = await window.NL.markReceived(CURRENT_DELIVERY_ID);
+      if (!ok) {
+        toast('⚠️ 정보 폐기 실패 — Supabase RLS UPDATE 정책을 확인하세요');
         return;
       }
     } catch (e) {
       toast('⚠️ 폐기 실패: ' + ((e && e.message) || e));
-      console.error('[receiver] clearInfo 예외:', e);
+      console.error('[receiver] markReceived 예외:', e);
       return;
     }
 
-    // 성공 → 로컬 상태 정리 (구독으로도 들어오지만 즉시 반영)
-    const idx = DELIVERIES.findIndex(d => d.id === CURRENT_DELIVERY_ID);
-    if (idx >= 0) DELIVERIES.splice(idx, 1);
-    if (!DELIVERIES.find(d => d.id === MY_DELIVERY_ID)) {
-      DELIVERIES.push(placeholderPreparing());
+    // 성공 → 로컬도 received 상태로 갱신 (행 유지, infoCleared:true)
+    // ⚠️ splice/placeholder push 금지 — 그게 이전 '픽업 대기' 오작동 원인이었음
+    const item = DELIVERIES.find(d => d.id === CURRENT_DELIVERY_ID);
+    if (item) {
+      item.status = '배송완료';
+      item.statusLabel = '배송 완료';
+      item.infoCleared = true;
+      item.name = ''; item.address = ''; item.phone = '';
     }
     document.getElementById("complete-id").textContent = CURRENT_DELIVERY_ID || "-";
     renderList();
