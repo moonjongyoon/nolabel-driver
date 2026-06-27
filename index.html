@@ -9,6 +9,7 @@
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="supabase.js"></script>
 <script>
   window.__qrLibLoaded = false;
   window.__qrLibError  = null;
@@ -1808,7 +1809,7 @@
     hideScanError();
   }
 
-  function onScanSuccess(decodedText) {
+  async function onScanSuccess(decodedText) {
     let data;
     try {
       data = JSON.parse(decodedText);
@@ -1847,6 +1848,19 @@
         .addTo(mainMap);
       m.on('click', () => openDelivery(d.id));
       mainMarkers[d.id] = m;
+    }
+
+    // Supabase 동기화 (네트워크 없어도 데모는 그대로 동작 — 실패 시 console.warn 만)
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (window.NL && window.NL.upsertDelivery) {
+        await window.NL.upsertDelivery({
+          id: d.id, name: d.name, address: d.address, phone: d.phone,
+          lat: d.lat, lng: d.lng, region: d.region, status: 'in_transit'
+        });
+      }
+    } catch (e) {
+      console.warn('[Supabase] upsertDelivery 스킵:', (e && e.message) || e);
     }
   }
 
@@ -1957,7 +1971,7 @@
     dialDelivery(CURRENT_LOOKUP_ID);
   }
 
-  function notifyDeliveryDone() {
+  async function notifyDeliveryDone() {
     const item = DELIVERIES.find(d => d.id === CURRENT_LOOKUP_ID);
     if (!item) return;
     item.status = "완료";
@@ -1965,6 +1979,16 @@
     renderList();
     toast("📨 수취인에게 배송 완료 알림을 전송했습니다");
     go("screen-done");
+
+    // Supabase 동기화 — 수취인 앱 실시간 갱신 트리거
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (window.NL && window.NL.updateStatus) {
+        await window.NL.updateStatus(item.id, 'delivered');
+      }
+    } catch (e) {
+      console.warn('[Supabase] updateStatus 스킵:', (e && e.message) || e);
+    }
   }
 
   function populateDone(item) {
