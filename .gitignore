@@ -24,3 +24,5 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# NOLABEL — Git 제외 목록 (원본 목업·환경변수 파일)
