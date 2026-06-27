@@ -200,3 +200,4 @@ function nearestNeighborOrder(start, deliveries) {
 function round1(x) {
   return Math.round(x * 10) / 10;
 }
+// NOLABEL · AI 최적경로 서버리스 함수 — Claude + 최단거리 보정
