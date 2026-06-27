@@ -15,6 +15,12 @@
 
 ---
 
+## 🎬 시연 영상
+
+▶️ https://youtu.be/YOUR_YOUTUBE_LINK — 기사 앱과 수취인 앱의 실시간 연동 전체 플로우 시연
+
+---
+
 ## 🗂 파일 구조
 
 ```
@@ -219,31 +225,6 @@ vercel env add ANTHROPIC_API_KEY development
 - **등록순(입력순) 그대로 폴백은 하지 않음** — 사용자에겐 어느 경로로도 항상 거리순 최적화된 결과가 보임
 
 응답 `order` 그대로 도로 polyline 은 [OSRM 공개 서버](https://router.project-osrm.org/) 로 받아서 그립니다.
-
----
-
-## 🖼 스크린샷 / GIF (자리표시)
-
-### 기사 앱
-| 화면 | 미리보기 |
-| --- | --- |
-| 로그인 | `docs/driver-login.png` *(추후 추가)* |
-| 일괄 QR 스캔 (실카메라) | `docs/driver-scan.gif` *(추후 추가)* |
-| 배송 목록 + 실제 지도 + 내 위치 | `docs/driver-list.png` *(추후 추가)* |
-| 🤖 AI 최적 경로 (OSRM 도로 polyline) | `docs/driver-ai-route.gif` *(추후 추가)* |
-| 카드 탭 → 정보 조회 (미니맵 + 경로 유지) | `docs/driver-lookup.png` *(추후 추가)* |
-| 배송 완료 알림 | `docs/driver-done.png` *(추후 추가)* |
-| 🔄 데모 리셋 | `docs/driver-reset.png` *(추후 추가)* |
-
-### 수취인 앱
-| 화면 | 미리보기 |
-| --- | --- |
-| 로그인 (010-1234-5678) | `docs/receiver-login.png` *(추후 추가)* |
-| 🟠 배송 준비중 (기사 픽업 전) | `docs/receiver-preparing.png` *(추후 추가)* |
-| 🟣 배송중 (실시간 추적 진입 카드) | `docs/receiver-intransit.png` *(추후 추가)* |
-| 실시간 위치 추적 (Leaflet + 기사 🚚 마커) | `docs/receiver-track.gif` *(추후 추가)* |
-| 🟡 배송완료 · 수령 확인 필요 (자동 전환) | `docs/receiver-arrived.png` *(추후 추가)* |
-| QR 본인 인증 → 정보 폐기 완료 (컨페티) | `docs/receiver-complete.gif` *(추후 추가)* |
 
 ---
 
