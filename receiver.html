@@ -1631,7 +1631,7 @@
         <div class="form-group">
           <label for="phone-input">📱 휴대폰 번호</label>
           <div class="input-wrap">
-            <input id="phone-input" type="text" value="010-3456-7890" />
+            <input id="phone-input" type="text" value="010-1234-5678" />
           </div>
         </div>
 
@@ -1915,7 +1915,7 @@
         <div class="verify-icon">🔐</div>
         <h3>본인 인증 코드 입력</h3>
         <p class="verify-desc">
-          <b>010-3456-7890</b> 으로 전송된<br/>
+          <b>010-1234-5678</b> 으로 전송된<br/>
           6자리 인증번호를 입력해주세요
         </p>
 
@@ -2307,6 +2307,7 @@
         console.log('[scan] start try:', a.label);
         await qrScanner.start(a.source, config, onScanSuccess, () => {});
         console.log('[scan] ✓ start success:', a.label);
+        await applyInitialZoom();
         return;
       } catch (err) {
         console.warn('[scan] start failed (' + a.label + '):', err && (err.message || err.name || err));
@@ -2321,9 +2322,43 @@
       const backCam = cams.find(c => /back|rear|environment|후면/i.test(c.label)) || cams[cams.length - 1];
       await qrScanner.start(backCam.id, config, onScanSuccess, () => {});
       console.log('[scan] ✓ start success via id:', backCam.label);
+      await applyInitialZoom();
     } catch (err) {
       showScanError('카메라 시작 실패: ' + (err && (err.message || err.name) || err));
       qrScanner = null;
+    }
+  }
+
+  /* 기사 앱과 동일한 카메라 줌 — 트랙 capability 의 zoom 을 min*2 (또는 range 30%) 로
+     applyConstraints. CSS transform 폴백은 영상 위치를 깨뜨려 쓰지 않음. */
+  async function applyInitialZoom() {
+    try {
+      await new Promise(r => setTimeout(r, 250));
+      const videoEl = document.querySelector('#qr-reader video');
+      if (!videoEl || !videoEl.srcObject) {
+        console.log('[scan] zoom: video 미준비 — skip');
+        return;
+      }
+      const tracks = videoEl.srcObject.getVideoTracks();
+      const track = tracks && tracks[0];
+      if (!track || !track.getCapabilities) {
+        console.log('[scan] zoom: track capabilities API 미지원 — 기본 배율');
+        return;
+      }
+      const caps = track.getCapabilities() || {};
+      if (caps.zoom && typeof caps.zoom.max === 'number') {
+        const minZ = caps.zoom.min || 1;
+        const maxZ = caps.zoom.max;
+        let target = Math.min(maxZ, minZ * 2);
+        const thirty = minZ + (maxZ - minZ) * 0.3;
+        if (target < thirty) target = thirty;
+        await track.applyConstraints({ advanced: [{ zoom: target }] });
+        console.log('[scan] ✓ zoom =', target.toFixed(2), 'of [' + minZ + ',' + maxZ + ']');
+      } else {
+        console.log('[scan] zoom capability 미지원 → 기본 배율 사용');
+      }
+    } catch (e) {
+      console.warn('[scan] zoom 적용 실패 (영상은 그대로):', e && (e.message || e));
     }
   }
 
