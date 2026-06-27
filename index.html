@@ -1493,6 +1493,23 @@
      F. Geolocation
      =========================================================== */
   let geoStarted = false;
+  let lastDriverPushAt = 0;
+  const DRIVER_PUSH_INTERVAL_MS = 5000;     // 최소 5초 간격
+
+  async function maybePushDriverLocation(lat, lng) {
+    const now = Date.now();
+    if (now - lastDriverPushAt < DRIVER_PUSH_INTERVAL_MS) return;
+    lastDriverPushAt = now;
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (window.NL && window.NL.pushDriverLocation) {
+        await window.NL.pushDriverLocation(lat, lng);
+      }
+    } catch (e) {
+      console.warn('[Supabase] pushDriverLocation 스킵:', (e && e.message) || e);
+    }
+  }
+
   function startGeolocationOnce() {
     if (geoStarted) return;
     geoStarted = true;
@@ -1506,6 +1523,8 @@
         driverPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         updateDriverMarker();
         if (first) fitMainBounds();
+        // Supabase 로 5초 throttle 위치 공유 (수취인 앱 실시간 추적용)
+        maybePushDriverLocation(driverPos.lat, driverPos.lng);
       },
       err => {
         console.warn('Geolocation error:', err);

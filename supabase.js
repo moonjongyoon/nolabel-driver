@@ -106,6 +106,56 @@
             console.warn('[NL] subscribe 실패:', (e && e.message) || e);
             return null;
           }
+        },
+
+        /* 기사 현재 위치 공유 — driver_location 테이블에 id='driver' 로 upsert */
+        async pushDriverLocation(lat, lng) {
+          try {
+            if (typeof lat !== 'number' || typeof lng !== 'number') {
+              throw new Error('pushDriverLocation: lat/lng 숫자 필수');
+            }
+            const { error } = await client
+              .from('driver_location')
+              .upsert({
+                id: 'driver',
+                lat, lng,
+                updated_at: new Date().toISOString()
+              }, { onConflict: 'id' });
+            if (error) throw error;
+            return true;
+          } catch (e) {
+            console.warn('[NL] pushDriverLocation 실패:', (e && e.message) || e);
+            return false;
+          }
+        },
+
+        /* 기사 위치 실시간 구독 — driver_location INSERT/UPDATE 시 onMove({lat,lng}) */
+        subscribeDriverLocation(onMove) {
+          try {
+            const channel = client
+              .channel('driver-location-realtime-' + Math.random().toString(36).slice(2, 8))
+              .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'driver_location' },
+                (payload) => {
+                  try {
+                    const row = payload.new || payload.old;
+                    if (row && typeof row.lat === 'number' && typeof row.lng === 'number') {
+                      onMove && onMove({ lat: row.lat, lng: row.lng });
+                    }
+                  } catch (e) {
+                    console.warn('[NL] subscribeDriverLocation handler 오류:', e);
+                  }
+                }
+              )
+              .subscribe((status) => {
+                console.log('[NL] driver-location realtime status:', status);
+              });
+            return channel;
+          } catch (e) {
+            console.warn('[NL] subscribeDriverLocation 실패:', (e && e.message) || e);
+            return null;
+          }
         }
       };
 
