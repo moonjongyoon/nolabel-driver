@@ -17,7 +17,9 @@
 
 ## 🎬 시연 영상
 
-▶️ https://youtu.be/YOUR_YOUTUBE_LINK — 기사 앱과 수취인 앱의 실시간 연동 전체 플로우 시연
+▶️ https://youtube.com/shorts/dbEtpDWui2g
+
+기사 앱과 수취인 앱의 실시간 연동 전체 플로우 — QR 스캔 등록 → 배송중 자동 전환 → AI 최적경로 → 배송완료 → 수취인 QR 인증 → 개인정보 폐기까지.
 
 ---
 
