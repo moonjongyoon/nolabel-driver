@@ -228,6 +228,24 @@
     background: linear-gradient(135deg, #e3f6ed, #c8eedb);
     color: #057a4f;
   }
+  .badge.준비중 {
+    background: linear-gradient(135deg, #fef0d9, #fcd896);
+    color: #8a5500;
+  }
+  .badge.준비중::before { animation: pulse 1.6s infinite; }
+
+  /* 배송 준비중 카드 — 따뜻한 오렌지 톤으로 배송중(보라)과 구분 */
+  .delivery-card:has(.badge.준비중)::before {
+    background: linear-gradient(180deg, #f5c97a, #e6b35d);
+  }
+  .delivery-card:has(.badge.준비중) {
+    background: linear-gradient(135deg, #fffaf3 0%, #fef4e3 100%);
+    border-color: rgba(242, 157, 58, 0.22);
+  }
+  .delivery-card:has(.badge.준비중) .delivery-meta .privacy {
+    color: var(--ink-3);
+    font-weight: 700;
+  }
 
   /* ===========================================================
      2. 로그인 화면 — 더 따뜻하고 환영하는 느낌
@@ -1977,6 +1995,23 @@
     return null; // 알 수 없는 status 는 무시
   }
 
+  /* Supabase 에 아직 행이 없을 때 표시할 placeholder — '배송 준비중' 카드 */
+  function placeholderPreparing() {
+    return {
+      id: MY_DELIVERY_ID,
+      region: '—',
+      name: '', address: '', phone: '',
+      lat: null, lng: null,
+      status: '준비중',
+      statusLabel: '배송 준비중',
+      infoCleared: false,
+      progress: 0,
+      isPlaceholder: true,
+      notifyArrival: false,
+      deliveryRequest: ''
+    };
+  }
+
   /* Supabase 에서 전체 로드 + 실시간 구독 시작 */
   async function bootstrapSupabase() {
     try {
@@ -1988,12 +2023,15 @@
       await window.NL_READY;
       const rows = await window.NL.fetchAll();
       DELIVERIES.length = 0;
-      rows.forEach(r => {
-        if (!r || r.id !== MY_DELIVERY_ID) return;   // 본인 배송만
-        const m = mapSupabaseRow(r);
+      const myRow = rows.find(r => r && r.id === MY_DELIVERY_ID);
+      if (myRow) {
+        const m = mapSupabaseRow(myRow);
         if (m) DELIVERIES.push(m);
-      });
-      console.log('[receiver] ✓ Supabase 데이터 로드 (본인 배송 한정):', DELIVERIES.length, '건');
+      } else {
+        // 아직 기사가 QR 안 찍음 → '배송 준비중' placeholder 카드
+        DELIVERIES.push(placeholderPreparing());
+      }
+      console.log('[receiver] ✓ Supabase 데이터 로드:', DELIVERIES[0] && DELIVERIES[0].status);
       renderList();
     } catch (e) {
       console.warn('[receiver] fetchAll 실패:', (e && e.message) || e);
@@ -2021,19 +2059,28 @@
       const idx = DELIVERIES.findIndex(d => d.id === row.id);
       const prev = idx >= 0 ? DELIVERIES[idx] : null;
 
+      const wasPlaceholder = !!(prev && prev.isPlaceholder);
+
       if (idx >= 0) {
-        // 사용자가 만진 UI 상태(notifyArrival, deliveryRequest) 는 보존
-        DELIVERIES[idx] = Object.assign({}, DELIVERIES[idx], mapped, {
-          notifyArrival:   DELIVERIES[idx].notifyArrival,
-          deliveryRequest: DELIVERIES[idx].deliveryRequest
-        });
+        if (wasPlaceholder) {
+          // placeholder(준비중) → 실제 데이터(배송중 등) 로 통째로 교체
+          DELIVERIES[idx] = mapped;
+        } else {
+          // 사용자가 만진 UI 상태(notifyArrival, deliveryRequest) 는 보존
+          DELIVERIES[idx] = Object.assign({}, DELIVERIES[idx], mapped, {
+            notifyArrival:   DELIVERIES[idx].notifyArrival,
+            deliveryRequest: DELIVERIES[idx].deliveryRequest
+          });
+        }
       } else {
         DELIVERIES.push(mapped);
       }
       renderList();
 
       // 상태 전이에 따른 토스트
-      if (!prev) {
+      if (wasPlaceholder && mapped.status === '배송중') {
+        toast(`🚚 기사님이 배송을 시작했어요!`);
+      } else if (!prev || wasPlaceholder) {
         toast(`📦 새 배송이 등록됐어요 (${mapped.region})`);
       } else if (prev.status !== mapped.status || prev.infoCleared !== mapped.infoCleared) {
         if (mapped.status === '배송완료' && !mapped.infoCleared) {
@@ -2123,11 +2170,12 @@
 
     const filtered = DELIVERIES.filter(matchesFilter);
 
-    // 우선순위: (0) 수령 확인 필요 → (1) 배송중 → (2) 정보 폐기 완료
+    // 우선순위: (0) 수령 확인 필요 → (1) 배송중 → (2) 배송 준비중 → (3) 폐기 완료
     const priority = d => {
       if (d.status === "배송완료" && !d.infoCleared) return 0;
       if (d.status === "배송중") return 1;
-      return 2;
+      if (d.status === "준비중") return 2;
+      return 3;
     };
     filtered.sort((a, b) => priority(a) - priority(b));
 
@@ -2150,7 +2198,21 @@
         card.setAttribute("data-id", d.id);
         card.onclick = () => openDelivery(d.id);
 
-        if (d.status === "배송중") {
+        if (d.status === "준비중") {
+          card.innerHTML = `
+            <div class="row">
+              <div class="row-meta">
+                <span class="region-chip">${d.region}</span>
+                <span class="badge 준비중">${d.statusLabel}</span>
+              </div>
+            </div>
+            <div class="delivery-id" style="color:var(--ink-3);">기사님 픽업 대기</div>
+            <div class="delivery-meta">
+              <span>📦 일반 · 표준배송</span>
+              <span class="privacy">⏳ 곧 시작돼요</span>
+            </div>
+          `;
+        } else if (d.status === "배송중") {
           card.innerHTML = `
             <div class="row">
               <div class="row-meta">
@@ -2200,6 +2262,7 @@
     const inProgress = DELIVERIES.filter(d => d.status === "배송중").length;
     const pending    = DELIVERIES.filter(d => d.status === "배송완료" && !d.infoCleared).length;
     const cleared    = DELIVERIES.filter(d => d.status === "배송완료" && d.infoCleared).length;
+    const preparing  = DELIVERIES.filter(d => d.status === "준비중").length;
     const all        = DELIVERIES.length;
 
     // 수령 확인 필요 안내 배너 표시/숨김
@@ -2215,9 +2278,13 @@
     }
 
     document.getElementById("list-count").textContent =
-      `배송중 ${inProgress} · 배송완료 ${pending + cleared}`;
+      preparing > 0
+        ? `준비중 ${preparing} · 배송중 ${inProgress} · 배송완료 ${pending + cleared}`
+        : `배송중 ${inProgress} · 배송완료 ${pending + cleared}`;
     document.getElementById("hero-summary").textContent =
-      `배송 중 ${inProgress}건 · 수령 확인 필요 ${pending}건`;
+      preparing > 0
+        ? `배송 준비중 ${preparing}건 · 기사님 픽업 대기`
+        : `배송 중 ${inProgress}건 · 수령 확인 필요 ${pending}건`;
 
     document.getElementById("stat-active").textContent = inProgress;
     document.getElementById("stat-pending").textContent = pending;
@@ -2236,6 +2303,10 @@
     if (!item) return;
     CURRENT_DELIVERY_ID = id;
 
+    if (item.status === "준비중") {
+      toast("기사님이 아직 픽업하지 않은 배송이에요");
+      return;
+    }
     if (item.status === "배송중") {
       populateTracking(item);
       go("screen-track");
