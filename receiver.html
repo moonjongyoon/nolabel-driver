@@ -2113,12 +2113,29 @@
     }
   }
 
-  /* postgres_changes payload 처리 — 카드 갱신/추가, 강조, 토스트 */
+  /* postgres_changes payload 처리 — 카드 갱신/추가/삭제, 강조, 토스트 */
   function handleRealtimeChange(payload) {
     try {
-      const row = payload.new || payload.old;
+      const eventType = payload.eventType;
+      const row = (eventType === 'DELETE') ? payload.old : payload.new;
       if (!row || !row.id) return;
       if (row.id !== MY_DELIVERY_ID) return;   // 본인 배송만 처리
+
+      // DELETE — 행 삭제(receiver clearInfo 또는 driver resetDemo)
+      if (eventType === 'DELETE') {
+        const idx = DELIVERIES.findIndex(d => d.id === row.id);
+        if (idx >= 0) DELIVERIES.splice(idx, 1);
+        // 본인 배송이 사라졌으니 '배송 준비중' placeholder 복귀
+        if (!DELIVERIES.find(d => d.id === MY_DELIVERY_ID)) {
+          DELIVERIES.push(placeholderPreparing());
+        }
+        renderList();
+        // screen-complete 에 있으면 사용자의 완료 애니메이션 방해하지 않게 toast 만 조용히
+        const onList = document.getElementById('screen-list').classList.contains('active');
+        if (onList) toast('🔄 배송 상태가 초기화됐어요');
+        return;
+      }
+
       const mapped = mapSupabaseRow(row);
       if (!mapped) return;
 

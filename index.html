@@ -1134,6 +1134,15 @@
         </div>
 
         <div id="delivery-list-container"></div>
+
+        <!-- 발표자용 숨은 리셋 버튼 (목록 맨 아래, 흐릿하게) -->
+        <div style="text-align:center; padding:24px 0 4px;">
+          <button onclick="resetDemo()"
+            title="데모 리셋 — Supabase 의 모든 배송 데이터 삭제"
+            style="background:none; border:none; color:var(--ink-3); font-size:11px; text-decoration:underline; cursor:pointer; opacity:0.45;">
+            ⟲ 데모 리셋
+          </button>
+        </div>
       </div>
 
       <div class="footer">
@@ -1910,6 +1919,35 @@
     toast('동기화 완료');
   }
 
+  /* 데모 리셋 — Supabase 의 deliveries/driver_location 삭제 + 로컬 상태 초기화.
+     발표자가 시연을 다시 돌릴 때 쓰는 숨겨진 버튼. */
+  async function resetDemo() {
+    if (!confirm('데모를 초기화합니다 (서버의 모든 배송 데이터 삭제). 계속할까요?')) return;
+    try {
+      if (window.NL_READY) await window.NL_READY;
+      if (window.NL && window.NL.resetDemo) {
+        await window.NL.resetDemo();
+      }
+    } catch (e) {
+      console.warn('[demo] resetDemo Supabase 호출 실패:', e);
+    }
+
+    // 로컬 상태 초기화
+    DELIVERIES.length = 0;
+    scannedIds.clear();
+    LAST_ROUTE_INFO = null;
+    lastRouteLatLngs = null;
+    mapUserAdjusted = false;
+
+    if (mainMap) {
+      Object.values(mainMarkers).forEach(m => { try { mainMap.removeLayer(m); } catch (_) {} });
+      mainMarkers = {};
+      if (routePolyline) { try { mainMap.removeLayer(routePolyline); } catch (_) {} routePolyline = null; }
+    }
+    renderList();
+    toast('🔄 데모가 초기화되었습니다');
+  }
+
   /* ===========================================================
      I. 배송 정보 조회 / 완료
      =========================================================== */
@@ -2212,19 +2250,30 @@
       if (!window.NL || !window.NL.subscribe) return;
       window.NL.subscribe(payload => {
         try {
-          const row = payload.new || payload.old;
+          const eventType = payload.eventType;
+          const row = (eventType === 'DELETE') ? payload.old : payload.new;
           if (!row || !row.id) return;
+
+          // 행 DELETE — 수취인 clearInfo 또는 resetDemo
+          if (eventType === 'DELETE') {
+            const local = DELIVERIES.find(d => d.id === row.id);
+            if (!local) return;     // 이미 로컬에도 없음 (resetDemo 직후 등)
+            local.status = '완료';
+            local.name = ''; local.address = ''; local.phone = '';
+            console.log('[Supabase] 행 삭제 반영(DELETE):', row.id);
+            toast(`🔒 ${local.region || row.id} 정보가 폐기되었습니다`);
+            renderList();
+            return;
+          }
+
+          // INSERT/UPDATE 처리 — 폐기 외 단계는 무시
           const local = DELIVERIES.find(d => d.id === row.id);
           if (!local) return;
-
-          // 수취인이 clearInfo 호출 → received 상태 + 개인정보 null 로 들어옴
           const personalEmpty = !row.name && !row.address && !row.phone;
           if ((row.status === 'received' || personalEmpty) && local.status !== '완료') {
             local.status = '완료';
-            local.name = '';
-            local.address = '';
-            local.phone = '';
-            console.log('[Supabase] 수취인 정보 폐기 반영:', row.id);
+            local.name = ''; local.address = ''; local.phone = '';
+            console.log('[Supabase] 수취인 정보 폐기 반영(UPDATE):', row.id);
             toast(`🔒 ${row.region || row.id} 정보가 폐기되었습니다`);
             renderList();
           }
