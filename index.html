@@ -1140,7 +1140,7 @@
           <button onclick="resetDemo()"
             title="데모 리셋 — Supabase 의 모든 배송 데이터 삭제"
             style="background:none; border:none; color:var(--ink-3); font-size:11px; text-decoration:underline; cursor:pointer; opacity:0.45;">
-            ⟲ 데모 리셋
+            🔄 데모 리셋
           </button>
         </div>
       </div>
@@ -1922,17 +1922,21 @@
   /* 데모 리셋 — Supabase 의 deliveries/driver_location 삭제 + 로컬 상태 초기화.
      발표자가 시연을 다시 돌릴 때 쓰는 숨겨진 버튼. */
   async function resetDemo() {
-    if (!confirm('데모를 초기화합니다 (서버의 모든 배송 데이터 삭제). 계속할까요?')) return;
+    if (!confirm('데모를 초기화할까요? 모든 배송 데이터가 삭제됩니다')) return;
+
+    let stats = null;
     try {
       if (window.NL_READY) await window.NL_READY;
       if (window.NL && window.NL.resetDemo) {
-        await window.NL.resetDemo();
+        stats = await window.NL.resetDemo();
       }
     } catch (e) {
-      console.warn('[demo] resetDemo Supabase 호출 실패:', e);
+      console.error('[demo] resetDemo 호출 실패:', e);
+      toast('리셋 실패: ' + ((e && e.message) || e));
+      return;
     }
 
-    // 로컬 상태 초기화
+    // 로컬 상태 초기화 (DB 일부 실패해도 화면은 깨끗하게)
     DELIVERIES.length = 0;
     scannedIds.clear();
     LAST_ROUTE_INFO = null;
@@ -1945,7 +1949,12 @@
       if (routePolyline) { try { mainMap.removeLayer(routePolyline); } catch (_) {} routePolyline = null; }
     }
     renderList();
-    toast('🔄 데모가 초기화되었습니다');
+
+    if (stats && stats.errors && stats.errors.length > 0) {
+      toast('일부 리셋 실패: ' + stats.errors.join(' / '));
+    } else {
+      toast('데모가 초기화됐습니다');
+    }
   }
 
   /* ===========================================================

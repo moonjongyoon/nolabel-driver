@@ -173,7 +173,7 @@
             stats.errors.push('driver_location:' + msg);
             console.warn('[NL] resetDemo driver_location 실패:', msg);
           }
-          console.log('[NL] resetDemo 최종:', stats);
+          console.log('[NL] resetDemo: deliveries ' + stats.deliveriesDeleted + '행, driver_location ' + stats.driverLocDeleted + '행 삭제');
           return stats;
         },
 
