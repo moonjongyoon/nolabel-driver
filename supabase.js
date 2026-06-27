@@ -291,3 +291,4 @@
     document.head.appendChild(s);
   }
 })();
+// NOLABEL · Supabase 공통 연동 모듈 — 두 앱 실시간 동기화
